@@ -1,5 +1,3 @@
-// lib/ui/pages/scan_page.dart
-
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -24,7 +22,6 @@ class _ScanPageState extends State<ScanPage> {
   ScanStatus _status = ScanStatus.scanning;
   DateTime? _pendingStartTime;
   String? _pendingAziendaName;
-  final String _qrCodeKey = "IL_MIO_CODICE_SPECIALE_PER_TIMBRARE";
 
   @override
   void initState() {
@@ -71,17 +68,25 @@ class _ScanPageState extends State<ScanPage> {
     setState(() => _status = ScanStatus.processing);
 
     final String? scannedCode = capture.barcodes.first.rawValue;
-    if (scannedCode != _qrCodeKey) {
+
+    final prefs = await SharedPreferences.getInstance();
+    final String validCode =
+        prefs.getString('custom_qr_code') ??
+        "IL_MIO_CODICE_SPECIALE_PER_TIMBRARE";
+
+    if (scannedCode != validCode) {
       _setFeedback(ScanStatus.failure, "Codice QR non valido.");
       return;
     }
+
     if (_selectedAzienda == null && _pendingStartTime == null) {
       _setFeedback(ScanStatus.failure, "Per favore, seleziona un'azienda.");
       return;
     }
+
     try {
-      final prefs = await SharedPreferences.getInstance();
       final startTimeString = prefs.getString('checkin_start_time');
+
       if (startTimeString == null) {
         final now = DateTime.now();
         await prefs.setString('checkin_start_time', now.toIso8601String());
@@ -129,8 +134,8 @@ class _ScanPageState extends State<ScanPage> {
         ScanStatus.failure,
         "Si è verificato un errore: ${e.toString()}",
       );
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.clear();
+      await prefs.remove('checkin_start_time');
+      await prefs.remove('checkin_azienda_id');
       if (mounted) {
         setState(() {
           _pendingStartTime = null;
