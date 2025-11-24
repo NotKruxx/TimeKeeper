@@ -131,17 +131,20 @@ class _ManageCompaniesPageState extends State<ManageCompaniesPage> {
       body: FutureBuilder<List<Azienda>>(
         future: _aziendeFuture,
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting)
+          if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
-          if (snapshot.hasError)
+          }
+          if (snapshot.hasError) {
             return Center(child: Text('Errore: ${snapshot.error}'));
+          }
           final aziende = snapshot.data ?? [];
-          if (aziende.isEmpty)
+          if (aziende.isEmpty) {
             return const Center(
               child: Text(
                 'Nessuna azienda trovata. Tocca + per aggiungerne una.',
               ),
             );
+          }
           return ListView.builder(
             itemCount: aziende.length,
             itemBuilder: (context, index) {

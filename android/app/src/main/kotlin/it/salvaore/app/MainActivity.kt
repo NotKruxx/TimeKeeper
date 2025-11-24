@@ -1,4 +1,4 @@
-package com.example.salvaore
+package it.salvaore.app
 
 import io.flutter.embedding.android.FlutterActivity
 

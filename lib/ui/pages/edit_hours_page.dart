@@ -71,10 +71,11 @@ class _EditHoursPageState extends State<EditHoursPage> {
       time.minute,
     );
     setState(() {
-      if (isStart)
+      if (isStart) {
         _startTime = dateTime;
-      else
+      } else {
         _endTime = dateTime;
+      }
     });
     _formKey.currentState?.validate();
   }
@@ -128,7 +129,7 @@ class _EditHoursPageState extends State<EditHoursPage> {
             children: [
               if (_aziende.isNotEmpty)
                 DropdownButtonFormField<Azienda>(
-                  value: _selectedAzienda,
+                  initialValue: _selectedAzienda,
                   decoration: const InputDecoration(labelText: 'Azienda'),
                   items: _aziende
                       .map(
@@ -145,10 +146,12 @@ class _EditHoursPageState extends State<EditHoursPage> {
                 dateTime: _startTime,
                 onTap: () => _pickDateTime(true),
                 validator: (value) {
-                  if (value == null)
+                  if (value == null) {
                     return 'Per favore, inserisci un orario di inizio.';
-                  if (value.isAfter(DateTime.now()))
+                  }
+                  if (value.isAfter(DateTime.now())) {
                     return 'L\'orario non può essere nel futuro.';
+                  }
                   return null;
                 },
               ),
@@ -158,8 +161,9 @@ class _EditHoursPageState extends State<EditHoursPage> {
                 dateTime: _endTime,
                 onTap: () => _pickDateTime(false),
                 validator: (value) {
-                  if (value == null)
+                  if (value == null) {
                     return 'Per favore, inserisci un orario di fine.';
+                  }
                   if (value.isBefore(_startTime)) {
                     return 'La fine non può essere prima dell\'inizio.';
                   }

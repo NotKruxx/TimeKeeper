@@ -184,7 +184,7 @@ class _ScanPageState extends State<ScanPage> {
               opacity: _pendingStartTime != null ? 0.5 : 1.0,
               child: _aziende.isNotEmpty
                   ? DropdownButtonFormField<Azienda>(
-                      value: _selectedAzienda,
+                      initialValue: _selectedAzienda,
                       decoration: const InputDecoration(
                         labelText: 'Azienda Corrente',
                       ),

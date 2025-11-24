@@ -34,7 +34,6 @@ class Application extends StatelessWidget {
           primary: Colors.teal,
           secondary: Colors.tealAccent,
           surface: Color(0xFF1E1E1E),
-          background: Color(0xFF121212),
         ),
         cardTheme: CardThemeData(
           elevation: 2,
