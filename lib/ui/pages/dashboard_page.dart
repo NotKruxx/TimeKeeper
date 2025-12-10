@@ -1,6 +1,7 @@
 // lib/ui/pages/dashboard_page.dart
 
 import 'dart:io';
+import 'dart:async'; 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:fl_chart/fl_chart.dart';
@@ -25,38 +26,68 @@ class _DashboardPageState extends State<DashboardPage> {
   List<String> _availableMonths = [];
   List<HoursWorked> _hours = [];
   List<Azienda> _aziende = [];
+  
+  Timer? _autoRefreshTimer;
 
   @override
   void initState() {
     super.initState();
     _loadData();
+    
+    _autoRefreshTimer = Timer.periodic(const Duration(milliseconds: 250), (timer) {
+      if (mounted) {
+        _loadData(silent: true);
+      }
+    });
   }
 
-  Future<void> _loadData() async {
+  @override
+  void dispose() {
+    _autoRefreshTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadData({bool silent = false}) async {
     final allHours = await _dbApi.getHoursWorked();
+    
     final months = allHours
         .map((h) => DateFormat('MMMM yyyy', 'it_IT').format(h.startTime))
         .toSet()
         .toList();
-    months.sort(
-      (a, b) => DateFormat(
-        'MMMM yyyy',
-        'it_IT',
-      ).parse(b).compareTo(DateFormat('MMMM yyyy', 'it_IT').parse(a)),
-    );
+    
+    months.sort((a, b) => DateFormat('MMMM yyyy', 'it_IT')
+        .parse(b)
+        .compareTo(DateFormat('MMMM yyyy', 'it_IT').parse(a)));
+    
     final aziendeList = await _dbApi.getAziende();
+    
     if (mounted) {
       setState(() {
         _availableMonths = months;
         _aziende = aziendeList;
-        if (_availableMonths.isNotEmpty && _selectedMonth == null) {
+
+        if (_availableMonths.isEmpty) {
+          _selectedMonth = null;
+        } else if (_selectedMonth != null && !_availableMonths.contains(_selectedMonth)) {
+          _selectedMonth = _availableMonths.first;
+        } else if (_selectedMonth == null && _availableMonths.isNotEmpty) {
           _selectedMonth = _availableMonths.first;
         }
-        if (_aziende.isNotEmpty && _selectedAzienda == null) {
+
+        if (_aziende.isEmpty) {
+          _selectedAzienda = null;
+        } else if (_selectedAzienda != null && !_aziende.contains(_selectedAzienda)) {
+          try {
+             _selectedAzienda = _aziende.firstWhere((a) => a.id == _selectedAzienda!.id);
+          } catch (e) {
+             _selectedAzienda = _aziende.first;
+          }
+        } else if (_selectedAzienda == null && _aziende.isNotEmpty) {
           _selectedAzienda = _aziende.first;
         }
       });
     }
+    
     await _filterHours();
   }
 
@@ -65,23 +96,26 @@ class _DashboardPageState extends State<DashboardPage> {
     if (mounted) {
       setState(() {
         _hours = allHours.where((h) {
+          if (_selectedMonth == null && _availableMonths.isNotEmpty) return false;
+          
           final monthMatch = _selectedMonth == null
-              ? true
-              : DateFormat('MMMM yyyy', 'it_IT').format(h.startTime) ==
-                    _selectedMonth;
+              ? true 
+              : DateFormat('MMMM yyyy', 'it_IT').format(h.startTime) == _selectedMonth;
+              
           final aziendaMatch = _selectedAzienda == null
               ? true
               : h.aziendaId == _selectedAzienda!.id;
+              
           return monthMatch && aziendaMatch;
         }).toList();
+        
         _hours.sort((a, b) => b.startTime.compareTo(a.startTime));
       });
     }
   }
 
   double _calculateHours(HoursWorked h) {
-    return h.endTime.difference(h.startTime).inMinutes / 60.0 -
-        h.lunchBreak / 60.0;
+    return h.endTime.difference(h.startTime).inMinutes / 60.0 - h.lunchBreak / 60.0;
   }
 
   double _calculateOrdinaryHours(HoursWorked h) {
@@ -94,10 +128,8 @@ class _DashboardPageState extends State<DashboardPage> {
     return totalHours > 8 ? totalHours - 8 : 0;
   }
 
-  double get totaleOrdinary =>
-      _hours.fold(0.0, (sum, h) => sum + _calculateOrdinaryHours(h));
-  double get totaleOvertime =>
-      _hours.fold(0.0, (sum, h) => sum + _calculateOvertime(h));
+  double get totaleOrdinary => _hours.fold(0.0, (sum, h) => sum + _calculateOrdinaryHours(h));
+  double get totaleOvertime => _hours.fold(0.0, (sum, h) => sum + _calculateOvertime(h));
 
   double get totalEarnings {
     if (_aziende.isEmpty) return 0.0;
@@ -129,32 +161,14 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<void> _exportToCsv() async {
     if (_hours.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Nessun dato da esportare per il filtro selezionato.',
-            ),
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nessun dato da esportare.')));
       }
       return;
     }
     List<List<dynamic>> rows = [];
-    rows.add([
-      'Azienda',
-      'Data',
-      'Inizio',
-      'Fine',
-      'Pausa (min)',
-      'Ore Ordinarie',
-      'Ore Straordinario',
-      'Note',
-    ]);
+    rows.add(['Azienda', 'Data', 'Inizio', 'Fine', 'Pausa (min)', 'Ore Ordinarie', 'Ore Straordinario', 'Note']);
     for (var h in _hours) {
-      final azienda = _aziende.firstWhere(
-        (a) => a.id == h.aziendaId,
-        orElse: () => Azienda(name: 'N/A'),
-      );
+      final azienda = _aziende.firstWhere((a) => a.id == h.aziendaId, orElse: () => Azienda(name: 'N/A'));
       rows.add([
         azienda.name,
         DateFormat('dd/MM/yyyy').format(h.startTime),
@@ -168,41 +182,43 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     String csv = const ListToCsvConverter().convert(rows);
     final directory = await getTemporaryDirectory();
-    final filterText = _selectedAzienda != null
-        ? _selectedAzienda!.name.replaceAll(' ', '_')
-        : 'tutte';
-    final path =
-        '${directory.path}/report_ore_${_selectedMonth?.replaceAll(' ', '_')}_$filterText.csv';
+    final filterText = _selectedAzienda != null ? _selectedAzienda!.name.replaceAll(' ', '_') : 'tutte';
+    final path = '${directory.path}/report_ore_${_selectedMonth?.replaceAll(' ', '_') ?? 'no_data'}_$filterText.csv';
     final file = File(path);
     await file.writeAsString(csv);
-    await Share.shareXFiles([
-      XFile(path),
-    ], text: 'Report ore lavorate per $_selectedMonth');
+    await Share.shareXFiles([XFile(path)], text: 'Report ore lavorate');
   }
 
   Future<void> _deleteHour(HoursWorked h) async {
-    if (h.id == null) {
-      return;
+    if (h.id == null) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Conferma eliminazione"),
+        content: const Text("Vuoi davvero eliminare questo turno?"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Annulla")),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true), 
+            child: const Text("Elimina", style: TextStyle(color: Colors.red))
+          ),
+        ],
+      )
+    );
+    if (confirm == true) {
+      await _dbApi.deleteHour(h.id!);
+      await _loadData();
     }
-    await _dbApi.deleteHour(h.id!);
-    await _loadData();
   }
 
   void _editHour(HoursWorked h) {
     Navigator.of(context)
-        .push(
-          MaterialPageRoute(builder: (context) => EditHoursPage(hourToEdit: h)),
-        )
-        .then((_) {
-          _loadData();
-        });
+        .push(MaterialPageRoute(builder: (context) => EditHoursPage(hourToEdit: h)))
+        .then((_) => _loadData());
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_selectedAzienda != null && !_aziende.contains(_selectedAzienda)) {
-      _selectedAzienda = _aziende.isNotEmpty ? _aziende.first : null;
-    }
     return Scaffold(
       appBar: AppBar(
         title: const Text('Dashboard'),
@@ -215,7 +231,7 @@ class _DashboardPageState extends State<DashboardPage> {
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: _loadData,
+        onRefresh: () async => await _loadData(),
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(16.0),
@@ -224,16 +240,25 @@ class _DashboardPageState extends State<DashboardPage> {
             children: [
               _buildFilters(),
               const SizedBox(height: 24),
-              _buildStatsCards(),
-              const SizedBox(height: 24),
-              _buildChart(),
-              const SizedBox(height: 24),
-              Text(
-                'Dettaglio Ore',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 8),
-              _buildHoursDataTable(),
+              if (_hours.isEmpty) 
+                const SizedBox(
+                  height: 200,
+                  child: Center(
+                    child: Text(
+                      "Nessun dato per il periodo selezionato.",
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  ),
+                )
+              else ...[
+                _buildStatsCards(),
+                const SizedBox(height: 24),
+                _buildChart(),
+                const SizedBox(height: 24),
+                Text('Dettaglio Ore', style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 8),
+                _buildHoursDataTable(),
+              ]
             ],
           ),
         ),
@@ -242,6 +267,10 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _buildFilters() {
+    if (_aziende.isEmpty && _availableMonths.isEmpty) {
+        return const Text("Nessun dato disponibile.");
+    }
+
     return Wrap(
       spacing: 16,
       runSpacing: 8,
@@ -250,24 +279,23 @@ class _DashboardPageState extends State<DashboardPage> {
         if (_aziende.isNotEmpty)
           DropdownButton<Azienda>(
             value: _selectedAzienda,
-            items: _aziende
-                .map((e) => DropdownMenuItem(value: e, child: Text(e.name)))
-                .toList(),
+            items: _aziende.map((e) => DropdownMenuItem(value: e, child: Text(e.name))).toList(),
             onChanged: (val) {
               setState(() => _selectedAzienda = val);
               _filterHours();
             },
+            hint: const Text("Seleziona Azienda"),
           ),
+          
         if (_availableMonths.isNotEmpty)
           DropdownButton<String>(
             value: _selectedMonth,
-            items: _availableMonths
-                .map((m) => DropdownMenuItem(value: m, child: Text(m)))
-                .toList(),
+            items: _availableMonths.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
             onChanged: (val) {
               setState(() => _selectedMonth = val);
               _filterHours();
             },
+            hint: const Text("Seleziona Mese"),
           ),
       ],
     );
@@ -277,57 +305,26 @@ class _DashboardPageState extends State<DashboardPage> {
     return LayoutBuilder(
       builder: (context, constraints) {
         const double breakpoint = 750.0;
-        final cardOrdinarie = _buildStatCard(
-          'Ordinarie',
-          totaleOrdinary.toStringAsFixed(2),
-          Icons.work_outline,
-        );
-        final cardStraordinario = _buildStatCard(
-          'Straordinario',
-          totaleOvertime.toStringAsFixed(2),
-          Icons.timer,
-        );
-        final cardComplessive = _buildStatCard(
-          'Complessive',
-          (totaleOrdinary + totaleOvertime).toStringAsFixed(2),
-          Icons.access_time_filled,
-        );
-        final cardGuadagni = _buildStatCard(
-          'Guadagni (€)',
-          totalEarnings.toStringAsFixed(2),
-          Icons.euro_symbol,
-        );
+        final cardOrdinarie = _buildStatCard('Ordinarie', totaleOrdinary.toStringAsFixed(2), Icons.work_outline);
+        final cardStraordinario = _buildStatCard('Straordinario', totaleOvertime.toStringAsFixed(2), Icons.timer);
+        final cardComplessive = _buildStatCard('Complessive', (totaleOrdinary + totaleOvertime).toStringAsFixed(2), Icons.access_time_filled);
+        final cardGuadagni = _buildStatCard('Guadagni (€)', totalEarnings.toStringAsFixed(2), Icons.euro_symbol);
 
         if (constraints.maxWidth < breakpoint) {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Row(
-                children: [
-                  Expanded(child: cardOrdinarie),
-                  const SizedBox(width: 16),
-                  Expanded(child: cardStraordinario),
-                ],
-              ),
+              Row(children: [Expanded(child: cardOrdinarie), const SizedBox(width: 16), Expanded(child: cardStraordinario)]),
               const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(child: cardComplessive),
-                  const SizedBox(width: 16),
-                  Expanded(child: cardGuadagni),
-                ],
-              ),
+              Row(children: [Expanded(child: cardComplessive), const SizedBox(width: 16), Expanded(child: cardGuadagni)]),
             ],
           );
         } else {
           return Row(
             children: [
-              Expanded(child: cardOrdinarie),
-              const SizedBox(width: 16),
-              Expanded(child: cardStraordinario),
-              const SizedBox(width: 16),
-              Expanded(child: cardComplessive),
-              const SizedBox(width: 16),
+              Expanded(child: cardOrdinarie), const SizedBox(width: 16),
+              Expanded(child: cardStraordinario), const SizedBox(width: 16),
+              Expanded(child: cardComplessive), const SizedBox(width: 16),
               Expanded(child: cardGuadagni),
             ],
           );
@@ -345,10 +342,7 @@ class _DashboardPageState extends State<DashboardPage> {
           children: [
             Icon(icon, size: 28, color: Theme.of(context).colorScheme.primary),
             const SizedBox(height: 8),
-            Text(
-              value,
-              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-            ),
+            Text(value, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),
             Text(title, style: TextStyle(color: Colors.grey[400])),
           ],
@@ -360,21 +354,18 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget _buildChart() {
     final dailyHours = _groupedHoursByDay();
     final uniqueDays = dailyHours.keys.toList()
-      ..sort(
-        (a, b) => DateFormat(
-          'dd/MM',
-        ).parse(a).compareTo(DateFormat('dd/MM').parse(b)),
-      );
+      ..sort((a, b) => DateFormat('dd/MM').parse(a).compareTo(DateFormat('dd/MM').parse(b)));
+      
+    if (uniqueDays.isEmpty) return const SizedBox();
+
     return SizedBox(
       height: 250,
       child: LineChart(
         LineChartData(
           minX: 0,
-          maxX: uniqueDays.isNotEmpty ? uniqueDays.length.toDouble() - 1 : 0,
+          maxX: uniqueDays.length > 1 ? uniqueDays.length.toDouble() - 1 : 1,
           minY: 0,
-          maxY: dailyHours.values.isNotEmpty
-              ? dailyHours.values.reduce((a, b) => a > b ? a : b) + 2
-              : 10,
+          maxY: (dailyHours.values.isEmpty ? 10 : dailyHours.values.reduce((a, b) => a > b ? a : b)) + 2,
           gridData: FlGridData(show: true),
           titlesData: FlTitlesData(
             show: true,
@@ -386,45 +377,28 @@ class _DashboardPageState extends State<DashboardPage> {
                 getTitlesWidget: (value, meta) {
                   int index = value.toInt();
                   if (index >= 0 && index < uniqueDays.length) {
-                    if (uniqueDays.length > 10 && index % 2 != 0) {
-                      return const SizedBox();
-                    }
+                    if (uniqueDays.length > 10 && index % 2 != 0) return const SizedBox();
                     return Padding(
                       padding: const EdgeInsets.only(top: 8.0),
-                      child: Text(
-                        uniqueDays[index],
-                        style: const TextStyle(fontSize: 10),
-                      ),
+                      child: Text(uniqueDays[index], style: const TextStyle(fontSize: 10)),
                     );
                   }
                   return const SizedBox();
                 },
               ),
             ),
-            leftTitles: AxisTitles(
-              sideTitles: SideTitles(showTitles: true, reservedSize: 40),
-            ),
-            topTitles: const AxisTitles(
-              sideTitles: SideTitles(showTitles: false),
-            ),
-            rightTitles: const AxisTitles(
-              sideTitles: SideTitles(showTitles: false),
-            ),
+            leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 40)),
+            topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
           ),
           lineBarsData: [
             LineChartBarData(
-              spots: List.generate(
-                uniqueDays.length,
-                (i) => FlSpot(i.toDouble(), dailyHours[uniqueDays[i]]!),
-              ),
+              spots: List.generate(uniqueDays.length, (i) => FlSpot(i.toDouble(), dailyHours[uniqueDays[i]]!)),
               isCurved: true,
               color: Theme.of(context).colorScheme.primary,
               barWidth: 3,
               dotData: FlDotData(show: true),
-              belowBarData: BarAreaData(
-                show: true,
-                color: Theme.of(context).colorScheme.primary.withAlpha(50),
-              ),
+              belowBarData: BarAreaData(show: true, color: Theme.of(context).colorScheme.primary.withOpacity(0.3)),
             ),
           ],
         ),
@@ -434,11 +408,12 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _buildHoursDataTable() {
     String getAziendaName(int aziendaId) {
-      final azienda = _aziende.firstWhere(
-        (a) => a.id == aziendaId,
-        orElse: () => Azienda(name: 'N/A'),
-      );
-      return azienda.name;
+      try {
+        final azienda = _aziende.firstWhere((a) => a.id == aziendaId);
+        return azienda.name;
+      } catch (e) {
+        return 'Sconosciuta';
+      }
     }
 
     return SingleChildScrollView(

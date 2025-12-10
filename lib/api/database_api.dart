@@ -34,7 +34,7 @@ class DatabaseApi {
 
     return await openDatabase(
       path,
-      version: 3,
+      version: 4, 
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -49,17 +49,22 @@ class DatabaseApi {
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
-      await db.execute(
-        'ALTER TABLE azienda ADD COLUMN hourly_rate REAL NOT NULL DEFAULT 0.0',
-      );
-      await db.execute(
-        'ALTER TABLE azienda ADD COLUMN overtime_rate REAL NOT NULL DEFAULT 0.0',
-      );
+      await db.execute('ALTER TABLE azienda ADD COLUMN hourly_rate REAL NOT NULL DEFAULT 0.0');
+      await db.execute('ALTER TABLE azienda ADD COLUMN overtime_rate REAL NOT NULL DEFAULT 0.0');
     }
     if (oldVersion < 3) {
-      await db.execute(
-        'UPDATE hours_worked SET lunch_break = 60 WHERE lunch_break = 1',
-      );
+      await db.execute('UPDATE hours_worked SET lunch_break = 60 WHERE lunch_break = 1');
+    }
+
+    if (oldVersion < 4) {
+      await db.execute('ALTER TABLE azienda ADD COLUMN schedule_config TEXT');
+      await db.execute('''
+        CREATE TABLE auto_gen_log(
+          azienda_id INTEGER,
+          date_processed TEXT,
+          PRIMARY KEY (azienda_id, date_processed)
+        )
+      ''');
     }
   }
 
@@ -69,9 +74,11 @@ class DatabaseApi {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
         hourly_rate REAL NOT NULL DEFAULT 0.0,
-        overtime_rate REAL NOT NULL DEFAULT 0.0
+        overtime_rate REAL NOT NULL DEFAULT 0.0,
+        schedule_config TEXT
       )
     ''');
+
     await db.execute('''
       CREATE TABLE hours_worked(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,6 +88,14 @@ class DatabaseApi {
         lunch_break INTEGER NOT NULL DEFAULT 0,
         notes TEXT,
         FOREIGN KEY (azienda_id) REFERENCES azienda(id) ON DELETE CASCADE
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE auto_gen_log(
+        azienda_id INTEGER,
+        date_processed TEXT,
+        PRIMARY KEY (azienda_id, date_processed)
       )
     ''');
   }
@@ -164,5 +179,82 @@ class DatabaseApi {
       limit: 1,
     );
     return result.isNotEmpty;
+  }
+
+  Future<void> runAutoShiftGeneration() async {
+    final db = await database;
+    final aziendeList = await getAziende();
+    final today = DateTime.now();
+
+    for (var azienda in aziendeList) {
+      final config = azienda.scheduleConfig;
+      
+
+      if (!config.enabled || config.automationStartDate == null || azienda.id == null) {
+        continue;
+      }
+
+
+      final startDateParts = config.automationStartDate!.split('-');
+      final startConfigDate = DateTime(
+        int.parse(startDateParts[0]), 
+        int.parse(startDateParts[1]), 
+        int.parse(startDateParts[2])
+      );
+
+      final daysDiff = today.difference(startConfigDate).inDays;
+      if (daysDiff < 0) continue; // Data nel futuro?
+
+      final daysToProcess = daysDiff > 365 ? 365 : daysDiff;
+
+
+      for (int i = daysToProcess; i >= 0; i--) {
+        final dateToCheck = today.subtract(Duration(days: i));
+        
+        final dateKey = "${dateToCheck.year}-${dateToCheck.month.toString().padLeft(2,'0')}-${dateToCheck.day.toString().padLeft(2,'0')}";
+
+
+        final logCheck = await db.query(
+          'auto_gen_log',
+          where: 'azienda_id = ? AND date_processed = ?',
+          whereArgs: [azienda.id, dateKey],
+        );
+
+        if (logCheck.isNotEmpty) continue;
+
+        if (config.activeDays.contains(dateToCheck.weekday)) {
+          final startDateTime = DateTime(
+            dateToCheck.year, dateToCheck.month, dateToCheck.day,
+            config.start.hour, config.start.minute
+          );
+          final endDateTime = DateTime(
+            dateToCheck.year, dateToCheck.month, dateToCheck.day,
+            config.end.hour, config.end.minute
+          );
+
+          final overlap = await checkOverlap(HoursWorked(
+            aziendaId: azienda.id!,
+            startTime: startDateTime,
+            endTime: endDateTime,
+            lunchBreak: 0,
+          ));
+
+          if (!overlap) {
+             await addHoursWorked(HoursWorked(
+              aziendaId: azienda.id!,
+              startTime: startDateTime,
+              endTime: endDateTime,
+              lunchBreak: config.lunchBreakMinutes, 
+              notes: 'Generato Automaticamente',
+            ));
+          }
+        }
+
+        await db.insert('auto_gen_log', {
+          'azienda_id': azienda.id,
+          'date_processed': dateKey
+        });
+      }
+    }
   }
 }

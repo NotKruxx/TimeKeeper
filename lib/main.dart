@@ -6,15 +6,21 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:flutter_phoenix/flutter_phoenix.dart';
 import 'ui/main_shell.dart';
+import 'api/database_api.dart'; 
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('it_IT', null);
 
+
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
+  
+  final dbApi = DatabaseApi();
+  await dbApi.database; 
+  dbApi.runAutoShiftGeneration(); 
 
   runApp(Phoenix(child: const Application()));
 }

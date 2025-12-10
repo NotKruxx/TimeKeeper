@@ -1,5 +1,3 @@
-// lib/ui/pages/manage_companies_page.dart
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../api/database_api.dart';
@@ -27,96 +25,16 @@ class _ManageCompaniesPageState extends State<ManageCompaniesPage> {
     });
   }
 
-  Future<void> _showAddCompanyDialog({Azienda? azienda}) async {
-    final nameController = TextEditingController(text: azienda?.name);
-    final rateController = TextEditingController(
-      text: azienda?.hourlyRate.toStringAsFixed(2) ?? '0.00',
+  Future<void> _openCompanyEditor({Azienda? azienda}) async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => CompanyEditorPage(azienda: azienda),
+      ),
     );
-    final overtimeController = TextEditingController(
-      text: azienda?.overtimeRate.toStringAsFixed(2) ?? '0.00',
-    );
-    final isEditing = azienda != null;
-
-    return showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text(isEditing ? 'Modifica Azienda' : 'Aggiungi Azienda'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextFormField(
-                  controller: nameController,
-                  autofocus: true,
-                  decoration: const InputDecoration(labelText: 'Nome azienda'),
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: rateController,
-                  decoration: const InputDecoration(
-                    labelText: 'Paga Oraria (€)',
-                  ),
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(
-                      RegExp(r'^\d+\.?\d{0,2}'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: overtimeController,
-                  decoration: const InputDecoration(
-                    labelText: 'Paga Straordinario (€)',
-                  ),
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(
-                      RegExp(r'^\d+\.?\d{0,2}'),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Annulla'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final name = nameController.text.trim();
-                final hourlyRate = double.tryParse(rateController.text) ?? 0.0;
-                final overtimeRate =
-                    double.tryParse(overtimeController.text) ?? hourlyRate;
-                if (name.isNotEmpty) {
-                  final newAzienda = Azienda(
-                    id: azienda?.id,
-                    name: name,
-                    hourlyRate: hourlyRate,
-                    overtimeRate: overtimeRate,
-                  );
-                  if (isEditing) {
-                    await _dbApi.updateAzienda(newAzienda);
-                  } else {
-                    await _dbApi.addAzienda(newAzienda);
-                  }
-                  Navigator.pop(context);
-                  _refreshAziende();
-                }
-              },
-              child: const Text('Salva'),
-            ),
-          ],
-        );
-      },
-    );
+    if (result == true) {
+      _refreshAziende();
+    }
   }
 
   Future<void> _deleteCompany(int id) async {
@@ -140,9 +58,7 @@ class _ManageCompaniesPageState extends State<ManageCompaniesPage> {
           final aziende = snapshot.data ?? [];
           if (aziende.isEmpty) {
             return const Center(
-              child: Text(
-                'Nessuna azienda trovata. Tocca + per aggiungerne una.',
-              ),
+              child: Text('Nessuna azienda trovata. Tocca + per aggiungerne una.'),
             );
           }
           return ListView.builder(
@@ -153,22 +69,34 @@ class _ManageCompaniesPageState extends State<ManageCompaniesPage> {
                 margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                 child: ListTile(
                   title: Text(azienda.name),
-                  subtitle: Text(
-                    'Paga: €${azienda.hourlyRate.toStringAsFixed(2)}/h - Straordinario: €${azienda.overtimeRate.toStringAsFixed(2)}/h',
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Paga: €${azienda.hourlyRate.toStringAsFixed(2)}/h'),
+                      if (azienda.scheduleConfig.enabled)
+                        Row(
+                          children: [
+                            const Icon(Icons.auto_awesome, size: 14, color: Colors.tealAccent),
+                            const SizedBox(width: 4),
+                            Text(
+                              "Auto: ${azienda.scheduleConfig.start.format(context)} - ${azienda.scheduleConfig.end.format(context)}",
+                              style: const TextStyle(fontSize: 12, color: Colors.tealAccent),
+                            ),
+                          ],
+                        ),
+                    ],
                   ),
+                  isThreeLine: true,
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton(
                         icon: const Icon(Icons.edit, color: Colors.orange),
-                        onPressed: () =>
-                            _showAddCompanyDialog(azienda: azienda),
-                        tooltip: 'Modifica',
+                        onPressed: () => _openCompanyEditor(azienda: azienda),
                       ),
                       IconButton(
                         icon: const Icon(Icons.delete, color: Colors.red),
                         onPressed: () => _deleteCompany(azienda.id!),
-                        tooltip: 'Elimina',
                       ),
                     ],
                   ),
@@ -179,10 +107,296 @@ class _ManageCompaniesPageState extends State<ManageCompaniesPage> {
         },
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _showAddCompanyDialog,
+        onPressed: () => _openCompanyEditor(),
         tooltip: 'Aggiungi Azienda',
         child: const Icon(Icons.add),
       ),
+    );
+  }
+}
+
+class CompanyEditorPage extends StatefulWidget {
+  final Azienda? azienda;
+  const CompanyEditorPage({super.key, this.azienda});
+
+  @override
+  State<CompanyEditorPage> createState() => _CompanyEditorPageState();
+}
+
+class _CompanyEditorPageState extends State<CompanyEditorPage> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  final _rateController = TextEditingController();
+  final _overtimeController = TextEditingController();
+  
+  final _breakController = TextEditingController();
+
+  bool _autoEnabled = false;
+  TimeOfDay _autoStart = const TimeOfDay(hour: 9, minute: 0);
+  TimeOfDay _autoEnd = const TimeOfDay(hour: 18, minute: 0);
+  List<int> _selectedDays = [1, 2, 3, 4, 5];
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.azienda != null) {
+      _nameController.text = widget.azienda!.name;
+      _rateController.text = widget.azienda!.hourlyRate.toStringAsFixed(2);
+      _overtimeController.text = widget.azienda!.overtimeRate.toStringAsFixed(2);
+      
+      final config = widget.azienda!.scheduleConfig;
+      _autoEnabled = config.enabled;
+      _autoStart = config.start;
+      _autoEnd = config.end;
+      _selectedDays = List.from(config.activeDays);
+      _breakController.text = config.lunchBreakMinutes.toString();
+    } else {
+      _rateController.text = "0.00";
+      _overtimeController.text = "0.00";
+      _breakController.text = "60"; 
+    }
+  }
+
+  Future<void> _pickTime(bool isStart) async {
+    final initial = isStart ? _autoStart : _autoEnd;
+    final picked = await showTimePicker(context: context, initialTime: initial);
+    if (picked != null) {
+      setState(() {
+        if (isStart) _autoStart = picked;
+        else _autoEnd = picked;
+      });
+    }
+  }
+
+  void _toggleDay(int day) {
+    setState(() {
+      if (_selectedDays.contains(day)) {
+        if (_selectedDays.length > 1) _selectedDays.remove(day);
+      } else {
+        _selectedDays.add(day);
+      }
+    });
+  }
+
+  Future<void> _save() async {
+    if (_formKey.currentState!.validate()) {
+      final name = _nameController.text.trim();
+      final hourlyRate = double.tryParse(_rateController.text) ?? 0.0;
+      final overtimeRate = double.tryParse(_overtimeController.text) ?? hourlyRate;
+      final lunchBreak = int.tryParse(_breakController.text) ?? 0;
+
+      String? automationStartDate;
+      
+      if (_autoEnabled) {
+        if (widget.azienda != null && 
+            widget.azienda!.scheduleConfig.enabled && 
+            widget.azienda!.scheduleConfig.automationStartDate != null) {
+          automationStartDate = widget.azienda!.scheduleConfig.automationStartDate;
+        } else {
+          final now = DateTime.now();
+          automationStartDate = "${now.year}-${now.month.toString().padLeft(2,'0')}-${now.day.toString().padLeft(2,'0')}";
+        }
+      } else {
+        automationStartDate = null;
+      }
+
+      final scheduleConfig = ScheduleConfig(
+        enabled: _autoEnabled,
+        start: _autoStart,
+        end: _autoEnd,
+        activeDays: _selectedDays,
+        lunchBreakMinutes: lunchBreak,
+        automationStartDate: automationStartDate,
+      );
+
+      final newAzienda = Azienda(
+        id: widget.azienda?.id,
+        name: name,
+        hourlyRate: hourlyRate,
+        overtimeRate: overtimeRate,
+        scheduleConfig: scheduleConfig,
+      );
+
+      try {
+        if (widget.azienda != null) {
+          await DatabaseApi().updateAzienda(newAzienda);
+        } else {
+          await DatabaseApi().addAzienda(newAzienda);
+        }
+
+        await DatabaseApi().runAutoShiftGeneration();
+
+        if (mounted) Navigator.pop(context, true);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Errore: $e'), backgroundColor: Colors.red),
+          );
+        }
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.azienda != null ? 'Modifica Azienda' : 'Nuova Azienda'),
+      ),
+      body: Form(
+        key: _formKey,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            TextFormField(
+              controller: _nameController,
+              decoration: const InputDecoration(labelText: 'Nome Azienda', prefixIcon: Icon(Icons.business)),
+              validator: (val) => val == null || val.isEmpty ? 'Nome obbligatorio' : null,
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _rateController,
+                    decoration: const InputDecoration(labelText: 'Paga Oraria (€)', prefixIcon: Icon(Icons.euro)),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}'))],
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: TextFormField(
+                    controller: _overtimeController,
+                    decoration: const InputDecoration(labelText: 'Straordinario (€)', prefixIcon: Icon(Icons.trending_up)),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}'))],
+                  ),
+                ),
+              ],
+            ),
+
+            const Divider(height: 40, thickness: 1),
+
+            Container(
+              decoration: BoxDecoration(
+                color: _autoEnabled ? Colors.teal.withOpacity(0.1) : Colors.grey.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: _autoEnabled ? Colors.teal : Colors.grey.withOpacity(0.3),
+                ),
+              ),
+              child: Column(
+                children: [
+                  SwitchListTile(
+                    title: const Text('Turni Automatici', style: TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: const Text('Genera automaticamente i turni'),
+                    value: _autoEnabled,
+                    onChanged: (val) => setState(() => _autoEnabled = val),
+                    secondary: Icon(Icons.auto_awesome, color: _autoEnabled ? Colors.tealAccent : Colors.grey),
+                  ),
+                  
+                  if (_autoEnabled) ...[
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      child: Column(
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              _timeButton("Inizio", _autoStart, () => _pickTime(true)),
+                              const Icon(Icons.arrow_right_alt),
+                              _timeButton("Fine", _autoEnd, () => _pickTime(false)),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          
+                          TextFormField(
+                            controller: _breakController,
+                            decoration: const InputDecoration(
+                              labelText: 'Pausa Pranzo (minuti)',
+                              prefixIcon: Icon(Icons.timelapse),
+                              helperText: 'Es: 60 per 1 ora, 0 per nessuna pausa',
+                            ),
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                          ),
+                          
+                          const SizedBox(height: 16),
+                          const Align(
+                            alignment: Alignment.centerLeft, 
+                            child: Text("Giorni attivi:", style: TextStyle(fontSize: 12, color: Colors.grey))
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 4,
+                            children: [
+                              _dayChip(1, "Lun"), _dayChip(2, "Mar"), _dayChip(3, "Mer"),
+                              _dayChip(4, "Gio"), _dayChip(5, "Ven"), _dayChip(6, "Sab"),
+                              _dayChip(7, "Dom"),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                        ],
+                      ),
+                    ),
+                  ]
+                ],
+              ),
+            ),
+            
+            const SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: _save,
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                backgroundColor: Colors.teal,
+              ),
+              child: const Text('SALVA', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _timeButton(String label, TimeOfDay time, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.white24),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          children: [
+            Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            Text(
+              time.format(context),
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _dayChip(int day, String label) {
+    final isSelected = _selectedDays.contains(day);
+    return FilterChip(
+      label: Text(label),
+      selected: isSelected,
+      onSelected: (_) => _toggleDay(day),
+      showCheckmark: false,
+      selectedColor: Colors.teal,
+      labelStyle: TextStyle(
+        color: isSelected ? Colors.white : Colors.white60,
+        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+      ),
+      padding: const EdgeInsets.all(4),
     );
   }
 }
