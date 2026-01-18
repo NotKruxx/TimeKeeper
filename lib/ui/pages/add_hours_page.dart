@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../api/database_api.dart';
 import '../../models/azienda.dart';
 import '../../models/hours_worked.dart';
@@ -23,7 +24,6 @@ class _AddHoursPageState extends State<AddHoursPage> {
   DateTime? _endTime;
   final _lunchBreakController = TextEditingController(text: '0');
   final _notesController = TextEditingController();
-
   bool _isSaving = false;
 
   @override
@@ -43,26 +43,11 @@ class _AddHoursPageState extends State<AddHoursPage> {
   }
 
   Future<void> _pickDateTime(bool isStart) async {
-    final date = await showDatePicker(
-      context: context,
-      initialDate: DateTime.now(),
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now(),
-    );
+    final date = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime(2020), lastDate: DateTime.now());
     if (date == null) return;
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.now(),
-    );
+    final time = await showTimePicker(context: context, initialTime: TimeOfDay.now());
     if (time == null) return;
-    final dateTime = DateTime(
-      date.year,
-      date.month,
-      date.day,
-      time.hour,
-      time.minute,
-    );
-
+    final dateTime = DateTime(date.year, date.month, date.day, time.hour, time.minute);
     setState(() {
       if (isStart) {
         _startTime = dateTime;
@@ -77,36 +62,26 @@ class _AddHoursPageState extends State<AddHoursPage> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isSaving = true);
 
-    final roundedStartTime = roundToNearestHalfHour(_startTime!);
-    final roundedEndTime = roundToNearestHalfHour(_endTime!);
-    final lunchInMinutes = int.tryParse(_lunchBreakController.text) ?? 0;
+    final prefs = await SharedPreferences.getInstance();
+    final bool arrotonda = prefs.getBool('arrotonda_orari') ?? true;
+    final startTimeToSave = arrotonda ? roundToNearestHalfHour(_startTime!) : _startTime!;
+    final endTimeToSave = arrotonda ? roundToNearestHalfHour(_endTime!) : _endTime!;
 
+    final lunchInMinutes = int.tryParse(_lunchBreakController.text) ?? 0;
     final newHours = HoursWorked(
       aziendaId: _selectedAzienda!.id!,
-      startTime: roundedStartTime,
-      endTime: roundedEndTime,
+      startTime: startTimeToSave,
+      endTime: endTimeToSave,
       lunchBreak: lunchInMinutes,
       notes: _notesController.text,
     );
-
     final isOverlapping = await _dbApi.checkOverlap(newHours);
-
     if (!mounted) return;
-
     if (isOverlapping) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Errore: l\'orario si sovrappone con un altro già salvato.',
-          ),
-          backgroundColor: Colors.red,
-        ),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Errore: l\'orario si sovrappone con un altro già salvato.'), backgroundColor: Colors.red));
     } else {
       await _dbApi.addHoursWorked(newHours);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ore salvate con successo!')),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ore salvate con successo!')));
       setState(() {
         _formKey.currentState!.reset();
         _startTime = null;
@@ -134,33 +109,20 @@ class _AddHoursPageState extends State<AddHoursPage> {
                 DropdownButtonFormField<Azienda>(
                   initialValue: _selectedAzienda,
                   decoration: const InputDecoration(labelText: 'Azienda'),
-                  items: _aziende
-                      .map(
-                        (a) => DropdownMenuItem(value: a, child: Text(a.name)),
-                      )
-                      .toList(),
+                  items: _aziende.map((a) => DropdownMenuItem(value: a, child: Text(a.name))).toList(),
                   onChanged: (val) => setState(() => _selectedAzienda = val),
-                  validator: (value) =>
-                      value == null ? 'Seleziona un\'azienda' : null,
+                  validator: (value) => value == null ? 'Seleziona un\'azienda' : null,
                 )
               else
-                const Center(
-                  child: Text(
-                    "Nessuna azienda trovata. Vai alla sezione 'Aziende' per aggiungerne una.",
-                  ),
-                ),
+                const Center(child: Text("Nessuna azienda trovata. Vai alla sezione 'Aziende' per aggiungerne una.")),
               const SizedBox(height: 20),
               _buildDateTimePicker(
                 label: 'Inizio Lavoro',
                 dateTime: _startTime,
                 onTap: () => _pickDateTime(true),
                 validator: (value) {
-                  if (value == null) {
-                    return 'Per favore, inserisci un orario di inizio.';
-                  }
-                  if (value.isAfter(DateTime.now())) {
-                    return 'L\'orario non può essere nel futuro.';
-                  }
+                  if (value == null) return 'Per favore, inserisci un orario di inizio.';
+                  if (value.isAfter(DateTime.now())) return 'L\'orario non può essere nel futuro.';
                   return null;
                 },
               ),
@@ -170,56 +132,27 @@ class _AddHoursPageState extends State<AddHoursPage> {
                 dateTime: _endTime,
                 onTap: () => _pickDateTime(false),
                 validator: (value) {
-                  if (value == null) {
-                    return 'Per favore, inserisci un orario di fine.';
-                  }
-                  if (_startTime != null && value.isBefore(_startTime!)) {
-                    return 'La fine non può essere prima dell\'inizio.';
-                  }
-                  if (_startTime != null &&
-                      value.difference(_startTime!).inHours > 24) {
-                    return 'Un turno non può durare più di 24 ore.';
-                  }
+                  if (value == null) return 'Per favore, inserisci un orario di fine.';
+                  if (_startTime != null && value.isBefore(_startTime!)) return 'La fine non può essere prima dell\'inizio.';
+                  if (_startTime != null && value.difference(_startTime!).inHours > 24) return 'Un turno non può durare più di 24 ore.';
                   return null;
                 },
               ),
               const SizedBox(height: 16),
               TextFormField(
                 controller: _lunchBreakController,
-                decoration: const InputDecoration(
-                  labelText: 'Pausa (minuti)',
-                  suffixText: 'min',
-                ),
+                decoration: const InputDecoration(labelText: 'Pausa (minuti)', suffixText: 'min'),
                 keyboardType: TextInputType.number,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
               ),
               const SizedBox(height: 16),
-              TextFormField(
-                controller: _notesController,
-                decoration: const InputDecoration(labelText: 'Note'),
-                maxLines: 3,
-              ),
+              TextFormField(controller: _notesController, decoration: const InputDecoration(labelText: 'Note'), maxLines: 3),
               const SizedBox(height: 32),
               ElevatedButton(
-                onPressed:
-                    (_startTime == null ||
-                        _endTime == null ||
-                        _selectedAzienda == null ||
-                        _isSaving)
-                    ? null
-                    : _saveHours,
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                ),
+                onPressed: (_startTime == null || _endTime == null || _selectedAzienda == null || _isSaving) ? null : _saveHours,
+                style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
                 child: _isSaving
-                    ? const SizedBox(
-                        height: 24,
-                        width: 24,
-                        child: CircularProgressIndicator(
-                          color: Colors.white,
-                          strokeWidth: 3,
-                        ),
-                      )
+                    ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3))
                     : const Text('Salva Ore'),
               ),
             ],
@@ -249,16 +182,8 @@ class _AddHoursPageState extends State<AddHoursPage> {
         return InkWell(
           onTap: onTap,
           child: InputDecorator(
-            decoration: InputDecoration(
-              labelText: label,
-              border: const OutlineInputBorder(),
-              errorText: state.errorText,
-            ),
-            child: Text(
-              dateTime == null
-                  ? 'Seleziona data e ora'
-                  : DateFormat('dd/MM/yyyy HH:mm').format(dateTime),
-            ),
+            decoration: InputDecoration(labelText: label, border: const OutlineInputBorder(), errorText: state.errorText),
+            child: Text(dateTime == null ? 'Seleziona data e ora' : DateFormat('dd/MM/yyyy HH:mm').format(dateTime)),
           ),
         );
       },

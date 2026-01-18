@@ -4,12 +4,12 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 class ScheduleConfig {
-  bool enabled;
-  TimeOfDay start;
-  TimeOfDay end;
-  List<int> activeDays; 
-  int lunchBreakMinutes;
-  String? automationStartDate; 
+  final bool enabled;
+  final TimeOfDay start;
+  final TimeOfDay end;
+  final List<int> activeDays; // 1-7 for Mon-Sun
+  final int lunchBreakMinutes;
+  final String? automationStartDate; // YYYY-MM-DD
 
   ScheduleConfig({
     this.enabled = false,
@@ -20,32 +20,26 @@ class ScheduleConfig {
     this.automationStartDate,
   });
 
-  String toJson() {
-    return jsonEncode({
-      'enabled': enabled,
-      'sh': start.hour, 'sm': start.minute,
-      'eh': end.hour, 'em': end.minute,
-      'days': activeDays,
-      'lb': lunchBreakMinutes,
-      'asd': automationStartDate,
-    });
-  }
+  Map<String, dynamic> toJson() => {
+        'enabled': enabled,
+        'start': '${start.hour}:${start.minute}',
+        'end': '${end.hour}:${end.minute}',
+        'activeDays': activeDays,
+        'lunchBreakMinutes': lunchBreakMinutes,
+        'automationStartDate': automationStartDate,
+      };
 
-  factory ScheduleConfig.fromJsonString(String? jsonStr) {
-    if (jsonStr == null || jsonStr.isEmpty) return ScheduleConfig();
-    try {
-      final map = jsonDecode(jsonStr);
-      return ScheduleConfig(
-        enabled: map['enabled'] ?? false,
-        start: TimeOfDay(hour: map['sh'] ?? 8, minute: map['sm'] ?? 0),
-        end: TimeOfDay(hour: map['eh'] ?? 17, minute: map['em'] ?? 0),
-        activeDays: List<int>.from(map['days'] ?? [1, 2, 3, 4, 5]),
-        lunchBreakMinutes: map['lb'] ?? 60,
-        automationStartDate: map['asd'],
-      );
-    } catch (e) {
-      return ScheduleConfig();
-    }
+  factory ScheduleConfig.fromJson(Map<String, dynamic> json) {
+    final startParts = (json['start'] as String? ?? '9:0').split(':');
+    final endParts = (json['end'] as String? ?? '18:0').split(':');
+    return ScheduleConfig(
+      enabled: json['enabled'] ?? false,
+      start: TimeOfDay(hour: int.parse(startParts[0]), minute: int.parse(startParts[1])),
+      end: TimeOfDay(hour: int.parse(endParts[0]), minute: int.parse(endParts[1])),
+      activeDays: List<int>.from(json['activeDays'] ?? [1, 2, 3, 4, 5]),
+      lunchBreakMinutes: json['lunchBreakMinutes'] ?? 60,
+      automationStartDate: json['automationStartDate'],
+    );
   }
 }
 
@@ -64,13 +58,20 @@ class Azienda {
     ScheduleConfig? scheduleConfig,
   }) : scheduleConfig = scheduleConfig ?? ScheduleConfig();
 
+  double get overtimeThreshold {
+    final startMinutes = scheduleConfig.start.hour * 60 + scheduleConfig.start.minute;
+    final endMinutes = scheduleConfig.end.hour * 60 + scheduleConfig.end.minute;
+    final breakMinutes = scheduleConfig.lunchBreakMinutes;
+    return (endMinutes - startMinutes - breakMinutes) / 60.0;
+  }
+
   Map<String, dynamic> toMap() {
     return {
       'id': id,
       'name': name,
       'hourly_rate': hourlyRate,
       'overtime_rate': overtimeRate,
-      'schedule_config': scheduleConfig.toJson(),
+      'schedule_config': jsonEncode(scheduleConfig.toJson()),
     };
   }
 
@@ -80,7 +81,7 @@ class Azienda {
       name: map['name'],
       hourlyRate: (map['hourly_rate'] as num?)?.toDouble() ?? 0.0,
       overtimeRate: (map['overtime_rate'] as num?)?.toDouble() ?? 0.0,
-      scheduleConfig: ScheduleConfig.fromJsonString(map['schedule_config']),
+      scheduleConfig: map['schedule_config'] != null ? ScheduleConfig.fromJson(jsonDecode(map['schedule_config'])) : ScheduleConfig(),
     );
   }
 

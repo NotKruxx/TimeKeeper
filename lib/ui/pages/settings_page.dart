@@ -1,3 +1,5 @@
+// lib/ui/pages/settings_page.dart
+
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
@@ -7,7 +9,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:intl/intl.dart';
-import 'package:qr_flutter/qr_flutter.dart';
+// import 'package:qr_flutter/qr_flutter.dart'; // RIMOSSO TEMPORANEAMENTE
 import '../../api/database_api.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -20,7 +22,33 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   bool _isBackingUp = false;
   bool _isRestoring = false;
-  final TextEditingController _qrController = TextEditingController();
+  // final TextEditingController _qrController = TextEditingController(); // RIMOSSO TEMPORANEAMENTE
+  bool _arrotondaOrari = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() {
+        _arrotondaOrari = prefs.getBool('arrotonda_orari') ?? true;
+      });
+    }
+  }
+
+  Future<void> _setArrotondaOrari(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('arrotonda_orari', value);
+    if (mounted) {
+      setState(() {
+        _arrotondaOrari = value;
+      });
+    }
+  }
 
   Future<String> get _dbPath async {
     const dbName = 'work_hours_app.db';
@@ -28,6 +56,7 @@ class _SettingsPageState extends State<SettingsPage> {
     return p.join(dbFolder, dbName);
   }
 
+  /* RIMOSSO TEMPORANEAMENTE
   Future<void> _editQrCode() async {
     final prefs = await SharedPreferences.getInstance();
     String currentCode =
@@ -124,6 +153,7 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
   }
+  */
 
   Future<void> _backupDatabase() async {
     setState(() => _isBackingUp = true);
@@ -231,6 +261,14 @@ class _SettingsPageState extends State<SettingsPage> {
       body: ListView(
         padding: const EdgeInsets.all(16.0),
         children: [
+          SwitchListTile(
+            title: const Text('Arrotonda orari in automatico'),
+            subtitle: const Text('Arrotonda inizio e fine alla mezz\'ora più vicina.'),
+            value: _arrotondaOrari,
+            onChanged: _setArrotondaOrari,
+          ),
+          const Divider(),
+          /* RIMOSSO TEMPORANEAMENTE
           ListTile(
             leading: const Icon(Icons.qr_code),
             title: const Text('Configura QR Code'),
@@ -243,6 +281,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
           const Divider(),
+          */
           ListTile(
             leading: _isBackingUp
                 ? const SizedBox(

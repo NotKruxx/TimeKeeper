@@ -3,9 +3,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../api/database_api.dart';
 import '../../models/azienda.dart';
 import '../../models/hours_worked.dart';
+import '../../utils/time_rounder.dart';
 
 class EditHoursPage extends StatefulWidget {
   final HoursWorked hourToEdit;
@@ -13,6 +15,7 @@ class EditHoursPage extends StatefulWidget {
   @override
   State<EditHoursPage> createState() => _EditHoursPageState();
 }
+
 
 class _EditHoursPageState extends State<EditHoursPage> {
   final _formKey = GlobalKey<FormState>();
@@ -30,22 +33,27 @@ class _EditHoursPageState extends State<EditHoursPage> {
     super.initState();
     _startTime = widget.hourToEdit.startTime;
     _endTime = widget.hourToEdit.endTime;
-    _lunchBreakController = TextEditingController(
-      text: widget.hourToEdit.lunchBreak.toString(),
-    );
+    _lunchBreakController = TextEditingController(text: widget.hourToEdit.lunchBreak.toString());
     _notesController = TextEditingController(text: widget.hourToEdit.notes);
+    _selectedAzienda = null;
     _loadAziende();
   }
 
   Future<void> _loadAziende() async {
     final aziendeList = await _dbApi.getAziende();
     if (mounted) {
+      Azienda? initialAzienda;
+      if (aziendeList.isNotEmpty) {
+        try {
+          initialAzienda = aziendeList.firstWhere((a) => a.id == widget.hourToEdit.aziendaId);
+        } catch (e) {
+          initialAzienda = aziendeList.first;
+        }
+      }
+
       setState(() {
         _aziende = aziendeList;
-        _selectedAzienda = _aziende.firstWhere(
-          (a) => a.id == widget.hourToEdit.aziendaId,
-          orElse: () => _aziende.first,
-        );
+        _selectedAzienda = initialAzienda;
       });
     }
   }
@@ -63,19 +71,10 @@ class _EditHoursPageState extends State<EditHoursPage> {
       initialTime: TimeOfDay.fromDateTime(isStart ? _startTime : _endTime),
     );
     if (time == null) return;
-    final dateTime = DateTime(
-      date.year,
-      date.month,
-      date.day,
-      time.hour,
-      time.minute,
-    );
+    final dateTime = DateTime(date.year, date.month, date.day, time.hour, time.minute);
     setState(() {
-      if (isStart) {
-        _startTime = dateTime;
-      } else {
-        _endTime = dateTime;
-      }
+      if (isStart) _startTime = dateTime;
+      else _endTime = dateTime;
     });
     _formKey.currentState?.validate();
   }
@@ -84,12 +83,18 @@ class _EditHoursPageState extends State<EditHoursPage> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isSaving = true);
 
+    final prefs = await SharedPreferences.getInstance();
+    final bool arrotonda = prefs.getBool('arrotonda_orari') ?? true;
+
+    final startTimeToSave = arrotonda ? roundToNearestHalfHour(_startTime) : _startTime;
+    final endTimeToSave = arrotonda ? roundToNearestHalfHour(_endTime) : _endTime;
+    
     final lunchInMinutes = int.tryParse(_lunchBreakController.text) ?? 0;
     final updatedHour = HoursWorked(
       id: widget.hourToEdit.id,
       aziendaId: _selectedAzienda!.id!,
-      startTime: _startTime,
-      endTime: _endTime,
+      startTime: startTimeToSave,
+      endTime: endTimeToSave,
       lunchBreak: lunchInMinutes,
       notes: _notesController.text,
     );
@@ -98,118 +103,85 @@ class _EditHoursPageState extends State<EditHoursPage> {
     if (!mounted) return;
 
     if (isOverlapping) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Errore: l\'orario si sovrappone con un altro già salvato.',
-          ),
-          backgroundColor: Colors.red,
-        ),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Errore: l\'orario si sovrappone con un altro già salvato.'),
+        backgroundColor: Colors.red,
+      ));
     } else {
       await _dbApi.updateHoursWorked(updatedHour);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Orario aggiornato con successo!')),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Orario aggiornato con successo!')));
       Navigator.of(context).pop();
     }
-    if (mounted) setState(() => _isSaving = false);
+    if (mounted) {
+      setState(() => _isSaving = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Modifica Orario')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24.0),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (_aziende.isNotEmpty)
-                DropdownButtonFormField<Azienda>(
-                  initialValue: _selectedAzienda,
-                  decoration: const InputDecoration(labelText: 'Azienda'),
-                  items: _aziende
-                      .map(
-                        (a) => DropdownMenuItem(value: a, child: Text(a.name)),
-                      )
-                      .toList(),
-                  onChanged: (val) => setState(() => _selectedAzienda = val),
-                  validator: (value) =>
-                      value == null ? 'Seleziona un\'azienda' : null,
+      body: _selectedAzienda == null
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(24.0),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (_aziende.isNotEmpty)
+                      DropdownButtonFormField<Azienda>(
+                        value: _selectedAzienda,
+                        decoration: const InputDecoration(labelText: 'Azienda'),
+                        items: _aziende.map((a) => DropdownMenuItem(value: a, child: Text(a.name))).toList(),
+                        onChanged: (val) => setState(() => _selectedAzienda = val),
+                        validator: (value) => value == null ? 'Seleziona un\'azienda' : null,
+                      ),
+                    const SizedBox(height: 20),
+                    _buildDateTimePicker(
+                      label: 'Inizio Lavoro',
+                      dateTime: _startTime,
+                      onTap: () => _pickDateTime(true),
+                      validator: (value) {
+                        if (value == null) return 'Per favore, inserisci un orario di inizio.';
+                        if (value.isAfter(DateTime.now())) return 'L\'orario non può essere nel futuro.';
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    _buildDateTimePicker(
+                      label: 'Fine Lavoro',
+                      dateTime: _endTime,
+                      onTap: () => _pickDateTime(false),
+                      validator: (value) {
+                        if (value == null) return 'Per favore, inserisci un orario di fine.';
+                        if (value.isBefore(_startTime)) return 'La fine non può essere prima dell\'inizio.';
+                        if (value.difference(_startTime).inHours > 24) return 'Un turno non può durare più di 24 ore.';
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _lunchBreakController,
+                      decoration: const InputDecoration(labelText: 'Pausa (minuti)', suffixText: 'min'),
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(controller: _notesController, decoration: const InputDecoration(labelText: 'Note'), maxLines: 3),
+                    const SizedBox(height: 32),
+                    ElevatedButton(
+                      onPressed: _isSaving ? null : _updateHours,
+                      style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
+                      child: _isSaving
+                          ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3))
+                          : const Text('Salva Modifiche'),
+                    ),
+                  ],
                 ),
-              const SizedBox(height: 20),
-              _buildDateTimePicker(
-                label: 'Inizio Lavoro',
-                dateTime: _startTime,
-                onTap: () => _pickDateTime(true),
-                validator: (value) {
-                  if (value == null) {
-                    return 'Per favore, inserisci un orario di inizio.';
-                  }
-                  if (value.isAfter(DateTime.now())) {
-                    return 'L\'orario non può essere nel futuro.';
-                  }
-                  return null;
-                },
               ),
-              const SizedBox(height: 16),
-              _buildDateTimePicker(
-                label: 'Fine Lavoro',
-                dateTime: _endTime,
-                onTap: () => _pickDateTime(false),
-                validator: (value) {
-                  if (value == null) {
-                    return 'Per favore, inserisci un orario di fine.';
-                  }
-                  if (value.isBefore(_startTime)) {
-                    return 'La fine non può essere prima dell\'inizio.';
-                  }
-                  if (value.difference(_startTime).inHours > 24) {
-                    return 'Un turno non può durare più di 24 ore.';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _lunchBreakController,
-                decoration: const InputDecoration(
-                  labelText: 'Pausa (minuti)',
-                  suffixText: 'min',
-                ),
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _notesController,
-                decoration: const InputDecoration(labelText: 'Note'),
-                maxLines: 3,
-              ),
-              const SizedBox(height: 32),
-              ElevatedButton(
-                onPressed: _isSaving ? null : _updateHours,
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                ),
-                child: _isSaving
-                    ? const SizedBox(
-                        height: 24,
-                        width: 24,
-                        child: CircularProgressIndicator(
-                          color: Colors.white,
-                          strokeWidth: 3,
-                        ),
-                      )
-                    : const Text('Salva Modifiche'),
-              ),
-            ],
-          ),
-        ),
-      ),
+            ),
     );
   }
 

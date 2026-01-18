@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'pages/add_hours_page.dart';
 import 'pages/dashboard_page.dart';
 import 'pages/manage_companies_page.dart';
-import 'pages/scan_page.dart';
+// import 'pages/scan_page.dart'; // RIMOSSO TEMPORANEAMENTE
 import 'pages/settings_page.dart';
 
 class MainShell extends StatefulWidget {
@@ -19,7 +19,7 @@ class _MainShellState extends State<MainShell> {
 
   static const List<Widget> _pages = <Widget>[
     DashboardPage(),
-    ScanPage(),
+    // ScanPage(), // RIMOSSO TEMPORANEAMENTE
     AddHoursPage(),
     ManageCompaniesPage(),
     SettingsPage(),
@@ -45,10 +45,12 @@ class _MainShellState extends State<MainShell> {
                   icon: Icon(Icons.dashboard),
                   label: 'Dashboard',
                 ),
+                /* RIMOSSO TEMPORANEAMENTE
                 BottomNavigationBarItem(
                   icon: Icon(Icons.qr_code_scanner),
                   label: 'Scansiona',
                 ),
+                */
                 BottomNavigationBarItem(
                   icon: Icon(Icons.add_circle),
                   label: 'Aggiungi',
@@ -80,11 +82,13 @@ class _MainShellState extends State<MainShell> {
                       selectedIcon: Icon(Icons.dashboard),
                       label: Text('Dashboard'),
                     ),
+                    /* RIMOSSO TEMPORANEAMENTE
                     NavigationRailDestination(
                       icon: Icon(Icons.qr_code_scanner_outlined),
                       selectedIcon: Icon(Icons.qr_code_scanner),
                       label: Text('Scansiona'),
                     ),
+                    */
                     NavigationRailDestination(
                       icon: Icon(Icons.add_circle_outline),
                       selectedIcon: Icon(Icons.add_circle),

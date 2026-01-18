@@ -1,7 +1,7 @@
 // lib/ui/pages/dashboard_page.dart
 
 import 'dart:io';
-import 'dart:async'; 
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:fl_chart/fl_chart.dart';
@@ -26,15 +26,13 @@ class _DashboardPageState extends State<DashboardPage> {
   List<String> _availableMonths = [];
   List<HoursWorked> _hours = [];
   List<Azienda> _aziende = [];
-  
   Timer? _autoRefreshTimer;
 
   @override
   void initState() {
     super.initState();
     _loadData();
-    
-    _autoRefreshTimer = Timer.periodic(const Duration(milliseconds: 250), (timer) {
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
       if (mounted) {
         _loadData(silent: true);
       }
@@ -48,46 +46,23 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _loadData({bool silent = false}) async {
-    final allHours = await _dbApi.getHoursWorked();
-    
-    final months = allHours
-        .map((h) => DateFormat('MMMM yyyy', 'it_IT').format(h.startTime))
-        .toSet()
-        .toList();
-    
-    months.sort((a, b) => DateFormat('MMMM yyyy', 'it_IT')
-        .parse(b)
-        .compareTo(DateFormat('MMMM yyyy', 'it_IT').parse(a)));
-    
     final aziendeList = await _dbApi.getAziende();
+    final allHours = await _dbApi.getHoursWorked();
+    final months = allHours.map((h) => DateFormat('MMMM yyyy', 'it_IT').format(h.startTime)).toSet().toList();
+    months.sort((a, b) => DateFormat('MMMM yyyy', 'it_IT').parse(b).compareTo(DateFormat('MMMM yyyy', 'it_IT').parse(a)));
     
     if (mounted) {
       setState(() {
-        _availableMonths = months;
         _aziende = aziendeList;
-
-        if (_availableMonths.isEmpty) {
-          _selectedMonth = null;
-        } else if (_selectedMonth != null && !_availableMonths.contains(_selectedMonth)) {
-          _selectedMonth = _availableMonths.first;
-        } else if (_selectedMonth == null && _availableMonths.isNotEmpty) {
+        _availableMonths = months;
+        if (_availableMonths.isNotEmpty && _selectedMonth == null) {
           _selectedMonth = _availableMonths.first;
         }
-
-        if (_aziende.isEmpty) {
-          _selectedAzienda = null;
-        } else if (_selectedAzienda != null && !_aziende.contains(_selectedAzienda)) {
-          try {
-             _selectedAzienda = _aziende.firstWhere((a) => a.id == _selectedAzienda!.id);
-          } catch (e) {
-             _selectedAzienda = _aziende.first;
-          }
-        } else if (_selectedAzienda == null && _aziende.isNotEmpty) {
+        if (_aziende.isNotEmpty && _selectedAzienda == null) {
           _selectedAzienda = _aziende.first;
         }
       });
     }
-    
     await _filterHours();
   }
 
@@ -96,52 +71,73 @@ class _DashboardPageState extends State<DashboardPage> {
     if (mounted) {
       setState(() {
         _hours = allHours.where((h) {
-          if (_selectedMonth == null && _availableMonths.isNotEmpty) return false;
-          
-          final monthMatch = _selectedMonth == null
-              ? true 
-              : DateFormat('MMMM yyyy', 'it_IT').format(h.startTime) == _selectedMonth;
-              
-          final aziendaMatch = _selectedAzienda == null
-              ? true
-              : h.aziendaId == _selectedAzienda!.id;
-              
+          final monthMatch = _selectedMonth == null ? true : DateFormat('MMMM yyyy', 'it_IT').format(h.startTime) == _selectedMonth;
+          final aziendaMatch = _selectedAzienda == null ? true : h.aziendaId == _selectedAzienda!.id;
           return monthMatch && aziendaMatch;
         }).toList();
-        
         _hours.sort((a, b) => b.startTime.compareTo(a.startTime));
       });
     }
   }
 
   double _calculateHours(HoursWorked h) {
-    return h.endTime.difference(h.startTime).inMinutes / 60.0 - h.lunchBreak / 60.0;
+    double totalMinutes = h.endTime.difference(h.startTime).inMinutes.toDouble();
+    double breakMinutes = h.lunchBreak.toDouble();
+    return (totalMinutes - breakMinutes) / 60.0;
   }
 
-  double _calculateOrdinaryHours(HoursWorked h) {
+  double _calculateOrdinaryHours(HoursWorked h, Azienda azienda) {
     double totalHours = _calculateHours(h);
-    return totalHours > 8 ? 8 : (totalHours < 0 ? 0 : totalHours);
+    if (totalHours <= 0) return 0;
+
+    final isWorkDay = azienda.scheduleConfig.activeDays.contains(h.startTime.weekday);
+
+    if (!isWorkDay) {
+      return 0;
+    }
+
+    final double threshold = azienda.overtimeThreshold > 0 ? azienda.overtimeThreshold : 8.0;
+    return totalHours > threshold ? threshold : totalHours;
   }
 
-  double _calculateOvertime(HoursWorked h) {
+  double _calculateOvertime(HoursWorked h, Azienda azienda) {
     double totalHours = _calculateHours(h);
-    return totalHours > 8 ? totalHours - 8 : 0;
+    if (totalHours <= 0) return 0;
+
+    final isWorkDay = azienda.scheduleConfig.activeDays.contains(h.startTime.weekday);
+
+    if (!isWorkDay) {
+      return totalHours;
+    }
+
+    final double threshold = azienda.overtimeThreshold > 0 ? azienda.overtimeThreshold : 8.0;
+    return totalHours > threshold ? totalHours - threshold : 0;
+  }
+  
+  double get totaleOrdinary {
+    return _hours.fold(0.0, (sum, h) {
+      final azienda = _aziende.firstWhere((a) => a.id == h.aziendaId, orElse: () => Azienda(name: 'N/A'));
+      if (azienda.name == 'N/A') return sum;
+      return sum + _calculateOrdinaryHours(h, azienda);
+    });
   }
 
-  double get totaleOrdinary => _hours.fold(0.0, (sum, h) => sum + _calculateOrdinaryHours(h));
-  double get totaleOvertime => _hours.fold(0.0, (sum, h) => sum + _calculateOvertime(h));
-
+  double get totaleOvertime {
+    return _hours.fold(0.0, (sum, h) {
+      final azienda = _aziende.firstWhere((a) => a.id == h.aziendaId, orElse: () => Azienda(name: 'N/A'));
+      if (azienda.name == 'N/A') return sum;
+      return sum + _calculateOvertime(h, azienda);
+    });
+  }
+  
   double get totalEarnings {
     if (_aziende.isEmpty) return 0.0;
     double total = 0.0;
     for (var h in _hours) {
-      final azienda = _aziende.firstWhere(
-        (a) => a.id == h.aziendaId,
-        orElse: () => Azienda(name: 'N/A'),
-      );
+      final azienda = _aziende.firstWhere((a) => a.id == h.aziendaId, orElse: () => Azienda(name: 'N/A'));
       if (azienda.name != 'N/A') {
-        final ordinaryHours = _calculateOrdinaryHours(h);
-        final overtimeHours = _calculateOvertime(h);
+        final ordinaryHours = _calculateOrdinaryHours(h, azienda);
+        final overtimeHours = _calculateOvertime(h, azienda);
         total += (ordinaryHours * azienda.hourlyRate);
         total += (overtimeHours * azienda.overtimeRate);
       }
@@ -157,11 +153,11 @@ class _DashboardPageState extends State<DashboardPage> {
     }
     return dailyHours;
   }
-
+  
   Future<void> _exportToCsv() async {
     if (_hours.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nessun dato da esportare.')));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nessun dato da esportare per il filtro selezionato.')));
       }
       return;
     }
@@ -175,36 +171,36 @@ class _DashboardPageState extends State<DashboardPage> {
         DateFormat('HH:mm').format(h.startTime),
         DateFormat('HH:mm').format(h.endTime),
         h.lunchBreak,
-        _calculateOrdinaryHours(h).toStringAsFixed(2),
-        _calculateOvertime(h).toStringAsFixed(2),
+        _calculateOrdinaryHours(h, azienda).toStringAsFixed(2),
+        _calculateOvertime(h, azienda).toStringAsFixed(2),
         h.notes ?? '',
       ]);
     }
     String csv = const ListToCsvConverter().convert(rows);
     final directory = await getTemporaryDirectory();
     final filterText = _selectedAzienda != null ? _selectedAzienda!.name.replaceAll(' ', '_') : 'tutte';
-    final path = '${directory.path}/report_ore_${_selectedMonth?.replaceAll(' ', '_') ?? 'no_data'}_$filterText.csv';
+    final path = '${directory.path}/report_ore_${_selectedMonth?.replaceAll(' ', '_')}_$filterText.csv';
     final file = File(path);
     await file.writeAsString(csv);
-    await Share.shareXFiles([XFile(path)], text: 'Report ore lavorate');
+    await Share.shareXFiles([XFile(path)], text: 'Report ore lavorate per $_selectedMonth');
   }
 
   Future<void> _deleteHour(HoursWorked h) async {
     if (h.id == null) return;
     final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Conferma eliminazione"),
-        content: const Text("Vuoi davvero eliminare questo turno?"),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Annulla")),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true), 
-            child: const Text("Elimina", style: TextStyle(color: Colors.red))
-          ),
-        ],
-      )
-    );
+        context: context,
+        builder: (ctx) => AlertDialog(
+              title: const Text("Conferma eliminazione"),
+              content: const Text("Vuoi davvero eliminare questo turno?"),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Annulla")),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text("Elimina", style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            ));
     if (confirm == true) {
       await _dbApi.deleteHour(h.id!);
       await _loadData();
@@ -231,7 +227,7 @@ class _DashboardPageState extends State<DashboardPage> {
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: () async => await _loadData(),
+        onRefresh: () => _loadData(),
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(16.0),
@@ -240,7 +236,7 @@ class _DashboardPageState extends State<DashboardPage> {
             children: [
               _buildFilters(),
               const SizedBox(height: 24),
-              if (_hours.isEmpty) 
+              if (_hours.isEmpty)
                 const SizedBox(
                   height: 200,
                   child: Center(
@@ -268,9 +264,8 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _buildFilters() {
     if (_aziende.isEmpty && _availableMonths.isEmpty) {
-        return const Text("Nessun dato disponibile.");
+      return const Center(child: Text("Nessun dato disponibile. Inizia aggiungendo un'azienda e delle ore."));
     }
-
     return Wrap(
       spacing: 16,
       runSpacing: 8,
@@ -286,7 +281,6 @@ class _DashboardPageState extends State<DashboardPage> {
             },
             hint: const Text("Seleziona Azienda"),
           ),
-          
         if (_availableMonths.isNotEmpty)
           DropdownButton<String>(
             value: _selectedMonth,
@@ -309,7 +303,7 @@ class _DashboardPageState extends State<DashboardPage> {
         final cardStraordinario = _buildStatCard('Straordinario', totaleOvertime.toStringAsFixed(2), Icons.timer);
         final cardComplessive = _buildStatCard('Complessive', (totaleOrdinary + totaleOvertime).toStringAsFixed(2), Icons.access_time_filled);
         final cardGuadagni = _buildStatCard('Guadagni (€)', totalEarnings.toStringAsFixed(2), Icons.euro_symbol);
-
+        
         if (constraints.maxWidth < breakpoint) {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -353,11 +347,8 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _buildChart() {
     final dailyHours = _groupedHoursByDay();
-    final uniqueDays = dailyHours.keys.toList()
-      ..sort((a, b) => DateFormat('dd/MM').parse(a).compareTo(DateFormat('dd/MM').parse(b)));
-      
+    final uniqueDays = dailyHours.keys.toList()..sort((a, b) => DateFormat('dd/MM').parse(a).compareTo(DateFormat('dd/MM').parse(b)));
     if (uniqueDays.isEmpty) return const SizedBox();
-
     return SizedBox(
       height: 250,
       child: LineChart(
@@ -369,24 +360,14 @@ class _DashboardPageState extends State<DashboardPage> {
           gridData: FlGridData(show: true),
           titlesData: FlTitlesData(
             show: true,
-            bottomTitles: AxisTitles(
-              sideTitles: SideTitles(
-                showTitles: true,
-                reservedSize: 30,
-                interval: 1,
-                getTitlesWidget: (value, meta) {
-                  int index = value.toInt();
-                  if (index >= 0 && index < uniqueDays.length) {
-                    if (uniqueDays.length > 10 && index % 2 != 0) return const SizedBox();
-                    return Padding(
-                      padding: const EdgeInsets.only(top: 8.0),
-                      child: Text(uniqueDays[index], style: const TextStyle(fontSize: 10)),
-                    );
-                  }
-                  return const SizedBox();
-                },
-              ),
-            ),
+            bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 30, interval: 1, getTitlesWidget: (value, meta) {
+              int index = value.toInt();
+              if (index >= 0 && index < uniqueDays.length) {
+                if (uniqueDays.length > 10 && index % 2 != 0) return const SizedBox();
+                return Padding(padding: const EdgeInsets.only(top: 8.0), child: Text(uniqueDays[index], style: const TextStyle(fontSize: 10)));
+              }
+              return const SizedBox();
+            })),
             leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 40)),
             topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
             rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
@@ -398,7 +379,7 @@ class _DashboardPageState extends State<DashboardPage> {
               color: Theme.of(context).colorScheme.primary,
               barWidth: 3,
               dotData: FlDotData(show: true),
-              belowBarData: BarAreaData(show: true, color: Theme.of(context).colorScheme.primary.withOpacity(0.3)),
+              belowBarData: BarAreaData(show: true, color: Theme.of(context).colorScheme.primary.withAlpha(50)),
             ),
           ],
         ),
@@ -415,7 +396,6 @@ class _DashboardPageState extends State<DashboardPage> {
         return 'Sconosciuta';
       }
     }
-
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: DataTable(
@@ -429,31 +409,17 @@ class _DashboardPageState extends State<DashboardPage> {
           DataColumn(label: Text('Azioni')),
         ],
         rows: _hours.map((h) {
-          return DataRow(
-            cells: [
-              DataCell(Text(getAziendaName(h.aziendaId))),
-              DataCell(Text(DateFormat('dd/MM/yyyy').format(h.startTime))),
-              DataCell(Text(DateFormat('HH:mm').format(h.startTime))),
-              DataCell(Text(DateFormat('HH:mm').format(h.endTime))),
-              DataCell(Text('${h.lunchBreak} min')),
-              DataCell(
-                Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.edit, color: Colors.orange),
-                      onPressed: () => _editHour(h),
-                      tooltip: 'Modifica',
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () => _deleteHour(h),
-                      tooltip: 'Elimina',
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          );
+          return DataRow(cells: [
+            DataCell(Text(getAziendaName(h.aziendaId))),
+            DataCell(Text(DateFormat('dd/MM/yyyy').format(h.startTime))),
+            DataCell(Text(DateFormat('HH:mm').format(h.startTime))),
+            DataCell(Text(DateFormat('HH:mm').format(h.endTime))),
+            DataCell(Text('${h.lunchBreak} min')),
+            DataCell(Row(children: [
+              IconButton(icon: const Icon(Icons.edit, color: Colors.orange), onPressed: () => _editHour(h), tooltip: 'Modifica'),
+              IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => _deleteHour(h), tooltip: 'Elimina'),
+            ])),
+          ]);
         }).toList(),
       ),
     );

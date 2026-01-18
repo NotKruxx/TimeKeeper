@@ -28,13 +28,10 @@ class DatabaseApi {
   }
 
   Future<Database> _initDatabase() async {
-    String path = isForTesting
-        ? inMemoryDatabasePath
-        : join(await getDatabasesPath(), 'work_hours_app.db');
-
+    String path = isForTesting ? inMemoryDatabasePath : join(await getDatabasesPath(), 'work_hours_app.db');
     return await openDatabase(
       path,
-      version: 4, 
+      version: 4,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -55,7 +52,6 @@ class DatabaseApi {
     if (oldVersion < 3) {
       await db.execute('UPDATE hours_worked SET lunch_break = 60 WHERE lunch_break = 1');
     }
-
     if (oldVersion < 4) {
       await db.execute('ALTER TABLE azienda ADD COLUMN schedule_config TEXT');
       await db.execute('''
@@ -78,7 +74,6 @@ class DatabaseApi {
         schedule_config TEXT
       )
     ''');
-
     await db.execute('''
       CREATE TABLE hours_worked(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,7 +85,6 @@ class DatabaseApi {
         FOREIGN KEY (azienda_id) REFERENCES azienda(id) ON DELETE CASCADE
       )
     ''');
-
     await db.execute('''
       CREATE TABLE auto_gen_log(
         azienda_id INTEGER,
@@ -102,11 +96,7 @@ class DatabaseApi {
 
   Future<void> addAzienda(Azienda azienda) async {
     final db = await database;
-    await db.insert(
-      'azienda',
-      azienda.toMap(),
-      conflictAlgorithm: ConflictAlgorithm.ignore,
-    );
+    await db.insert('azienda', azienda.toMap(), conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
   Future<List<Azienda>> getAziende() async {
@@ -117,12 +107,7 @@ class DatabaseApi {
 
   Future<void> updateAzienda(Azienda azienda) async {
     final db = await database;
-    await db.update(
-      'azienda',
-      azienda.toMap(),
-      where: 'id = ?',
-      whereArgs: [azienda.id],
-    );
+    await db.update('azienda', azienda.toMap(), where: 'id = ?', whereArgs: [azienda.id]);
   }
 
   Future<void> deleteAzienda(int id) async {
@@ -132,21 +117,12 @@ class DatabaseApi {
 
   Future<void> addHoursWorked(HoursWorked hours) async {
     final db = await database;
-    await db.insert(
-      'hours_worked',
-      hours.toMap(),
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert('hours_worked', hours.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<void> updateHoursWorked(HoursWorked hours) async {
     final db = await database;
-    await db.update(
-      'hours_worked',
-      hours.toMap(),
-      where: 'id = ?',
-      whereArgs: [hours.id],
-    );
+    await db.update('hours_worked', hours.toMap(), where: 'id = ?', whereArgs: [hours.id]);
   }
 
   Future<void> deleteHour(int id) async {
@@ -163,97 +139,57 @@ class DatabaseApi {
   Future<bool> checkOverlap(HoursWorked hours) async {
     final db = await database;
     var whereString = 'azienda_id = ? AND start_time < ? AND end_time > ?';
-    var whereArgs = [
-      hours.aziendaId,
-      hours.endTime.toIso8601String(),
-      hours.startTime.toIso8601String(),
-    ];
+    var whereArgs = [hours.aziendaId, hours.endTime.toIso8601String(), hours.startTime.toIso8601String()];
     if (hours.id != null) {
       whereString += ' AND id != ?';
       whereArgs.add(hours.id!);
     }
-    final result = await db.query(
-      'hours_worked',
-      where: whereString,
-      whereArgs: whereArgs,
-      limit: 1,
-    );
+    final result = await db.query('hours_worked', where: whereString, whereArgs: whereArgs, limit: 1);
     return result.isNotEmpty;
   }
 
   Future<void> runAutoShiftGeneration() async {
     final db = await database;
     final aziendeList = await getAziende();
-    final today = DateTime.now();
+    final today = DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day);
 
     for (var azienda in aziendeList) {
       final config = azienda.scheduleConfig;
-      
-
       if (!config.enabled || config.automationStartDate == null || azienda.id == null) {
         continue;
       }
 
-
       final startDateParts = config.automationStartDate!.split('-');
-      final startConfigDate = DateTime(
-        int.parse(startDateParts[0]), 
-        int.parse(startDateParts[1]), 
-        int.parse(startDateParts[2])
-      );
+      final startConfigDate = DateTime(int.parse(startDateParts[0]), int.parse(startDateParts[1]), int.parse(startDateParts[2]));
 
-      final daysDiff = today.difference(startConfigDate).inDays;
-      if (daysDiff < 0) continue; // Data nel futuro?
+      int daysDiff = today.difference(startConfigDate).inDays;
+      if (daysDiff < 0) continue;
 
       final daysToProcess = daysDiff > 365 ? 365 : daysDiff;
 
+      for (int i = 0; i <= daysToProcess; i++) {
+        final dateToCheck = startConfigDate.add(Duration(days: i));
+        final dateKey = "${dateToCheck.year}-${dateToCheck.month.toString().padLeft(2, '0')}-${dateToCheck.day.toString().padLeft(2, '0')}";
 
-      for (int i = daysToProcess; i >= 0; i--) {
-        final dateToCheck = today.subtract(Duration(days: i));
-        
-        final dateKey = "${dateToCheck.year}-${dateToCheck.month.toString().padLeft(2,'0')}-${dateToCheck.day.toString().padLeft(2,'0')}";
-
-
-        final logCheck = await db.query(
-          'auto_gen_log',
-          where: 'azienda_id = ? AND date_processed = ?',
-          whereArgs: [azienda.id, dateKey],
-        );
-
+        final logCheck = await db.query('auto_gen_log', where: 'azienda_id = ? AND date_processed = ?', whereArgs: [azienda.id, dateKey]);
         if (logCheck.isNotEmpty) continue;
 
         if (config.activeDays.contains(dateToCheck.weekday)) {
-          final startDateTime = DateTime(
-            dateToCheck.year, dateToCheck.month, dateToCheck.day,
-            config.start.hour, config.start.minute
-          );
-          final endDateTime = DateTime(
-            dateToCheck.year, dateToCheck.month, dateToCheck.day,
-            config.end.hour, config.end.minute
-          );
-
-          final overlap = await checkOverlap(HoursWorked(
-            aziendaId: azienda.id!,
-            startTime: startDateTime,
-            endTime: endDateTime,
-            lunchBreak: 0,
-          ));
-
-          if (!overlap) {
-             await addHoursWorked(HoursWorked(
+          final startDateTime = DateTime(dateToCheck.year, dateToCheck.month, dateToCheck.day, config.start.hour, config.start.minute);
+          final endDateTime = DateTime(dateToCheck.year, dateToCheck.month, dateToCheck.day, config.end.hour, config.end.minute);
+          final shift = HoursWorked(aziendaId: azienda.id!, startTime: startDateTime, endTime: endDateTime, lunchBreak: config.lunchBreakMinutes);
+          
+          if (!await checkOverlap(shift)) {
+            await addHoursWorked(HoursWorked(
               aziendaId: azienda.id!,
               startTime: startDateTime,
               endTime: endDateTime,
-              lunchBreak: config.lunchBreakMinutes, 
+              lunchBreak: config.lunchBreakMinutes,
               notes: 'Generato Automaticamente',
             ));
           }
         }
-
-        await db.insert('auto_gen_log', {
-          'azienda_id': azienda.id,
-          'date_processed': dateKey
-        });
+        await db.insert('auto_gen_log', {'azienda_id': azienda.id, 'date_processed': dateKey});
       }
     }
   }
