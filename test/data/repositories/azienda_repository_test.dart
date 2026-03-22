@@ -14,6 +14,7 @@ void main() {
   });
 
   tearDown(TestDb.teardown);
+  tearDownAll(TestDb.dispose);
 
   Future<Azienda> _insert(String name, {double rate = 0}) async {
     await repo.insert(Azienda(name: name, hourlyRate: rate));

@@ -34,6 +34,7 @@ void main() {
     provider.dispose();
     await TestDb.teardown();
   });
+  tearDownAll(TestDb.dispose);
 
   Future<void> _insert(DateTime s, DateTime e, {int lunch = 60}) async {
     await HoursRepository.instance.insert(HoursWorked(

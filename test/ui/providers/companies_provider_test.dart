@@ -17,6 +17,7 @@ void main() {
     provider.dispose();
     await TestDb.teardown();
   });
+  tearDownAll(TestDb.dispose);
 
   group('CompaniesProvider', () {
     test('load returns empty on fresh DB', () async {

@@ -10,3 +10,4 @@ pubspec.lock
 *.iml
 .DS_Store
 Thumbs.db
+test_db_*/

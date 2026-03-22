@@ -21,6 +21,7 @@ void main() {
   });
 
   tearDown(TestDb.teardown);
+  tearDownAll(TestDb.dispose);
 
   HoursWorked _shift({DateTime? start, DateTime? end, int lunch = 60, int? id}) {
     final s = start ?? DateTime(2025, 6, 1, 9, 0);
