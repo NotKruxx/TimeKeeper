@@ -1,0 +1,12 @@
+build/
+.dart_tool/
+test_db/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+pubspec.lock
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db

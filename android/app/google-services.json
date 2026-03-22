@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "51737869661",
+    "project_id": "timekeeper-5de46",
+    "storage_bucket": "timekeeper-5de46.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:51737869661:android:8fc52f3d8792ed6fa87cb4",
+        "android_client_info": {
+          "package_name": "it.salvaore.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "51737869661-4binnbjt1sfd2vucfk3c065f7u3iki52.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBBMQQaQqsaHvurtoOTeseq7mQd70OJe9M"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "51737869661-4binnbjt1sfd2vucfk3c065f7u3iki52.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
