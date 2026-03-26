@@ -30,30 +30,51 @@ class AziendaRepository {
 
   Future<int> insert(Azienda azienda) async {
     if (getAll().any((a) => a.name == azienda.name)) return -1;
-    final id = HiveProvider.instance.nextAziendaId();
-    await _box.put(id, azienda.copyWith(id: id).toMap());
+    final id  = HiveProvider.instance.nextAziendaId();
+    final map = azienda.copyWith(id: id).toMap();
+    map['updatedAt'] = DateTime.now().toIso8601String(); // ← LWW stamp
+    await _box.put(id, map);
     FirebaseService.instance.schedulePush();
     return id;
   }
 
   Future<void> update(Azienda azienda) async {
     assert(azienda.id != null);
-    await _box.put(azienda.id, azienda.toMap());
+    final map = azienda.toMap();
+    map['updatedAt'] = DateTime.now().toIso8601String(); // ← LWW stamp
+    await _box.put(azienda.id, map);
     FirebaseService.instance.schedulePush();
   }
 
   Future<void> delete(int id) async {
-    // Cascade soft-delete sulle ore
+    final now = DateTime.now().toIso8601String();
+
+    // Cascade soft-delete sulle ore collegate
     final hoursBox = HiveProvider.instance.hours;
     for (final key in hoursBox.keys) {
       final raw = hoursBox.get(key);
       if (raw == null) continue;
       final m = _cast(raw);
       if (m['azienda_id'] == id) {
-        await hoursBox.put(key, {...m, 'deleted': 1});
+        await hoursBox.put(key, {
+          ...m,
+          'deleted':   1,
+          'deletedAt': now, // ← tombstone per sync
+          'updatedAt': now, // ← LWW stamp
+        });
       }
     }
-    await _box.delete(id);
+
+    // Soft-delete dell'azienda stessa (tombstone, non hard delete)
+    final raw = _box.get(id);
+    if (raw != null) {
+      await _box.put(id, {
+        ..._cast(raw),
+        'deletedAt': now, // ← tombstone per sync
+        'updatedAt': now, // ← LWW stamp
+      });
+    }
+
     FirebaseService.instance.schedulePush();
   }
 

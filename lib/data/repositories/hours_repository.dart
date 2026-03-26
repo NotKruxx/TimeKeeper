@@ -37,22 +37,32 @@ class HoursRepository {
   // ── writes ────────────────────────────────────────────────────────────────
 
   Future<int> insert(HoursWorked hours) async {
-    final id = hours.id ?? HiveProvider.instance.nextHoursId();
-    await _box.put(id, hours.copyWith(id: id).toMap());
+    final id  = hours.id ?? HiveProvider.instance.nextHoursId();
+    final map = hours.copyWith(id: id).toMap();
+    map['updatedAt'] = DateTime.now().toIso8601String(); // ← LWW stamp
+    await _box.put(id, map);
     FirebaseService.instance.schedulePush();
     return id;
   }
 
   Future<void> update(HoursWorked hours) async {
     assert(hours.id != null);
-    await _box.put(hours.id, hours.toMap());
+    final map = hours.toMap();
+    map['updatedAt'] = DateTime.now().toIso8601String(); // ← LWW stamp
+    await _box.put(hours.id, map);
     FirebaseService.instance.schedulePush();
   }
 
   Future<void> softDelete(int id) async {
     final raw = _box.get(id);
     if (raw == null) return;
-    await _box.put(id, {..._cast(raw), 'deleted': 1});
+    final now = DateTime.now().toIso8601String();
+    await _box.put(id, {
+      ..._cast(raw),
+      'deleted':   1,
+      'deletedAt': now, // ← tombstone per sync
+      'updatedAt': now, // ← LWW stamp
+    });
     FirebaseService.instance.schedulePush();
   }
 
