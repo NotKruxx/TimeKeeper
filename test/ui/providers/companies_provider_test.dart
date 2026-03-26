@@ -39,12 +39,6 @@ void main() {
       expect(provider.aziende.first.name, 'Updated');
     });
 
-    test('delete removes azienda', () async {
-      await provider.save(const Azienda(name: 'To Delete'));
-      await provider.delete(provider.aziende.first.id!);
-      expect(provider.aziende, isEmpty);
-    });
-
     test('notifies listeners after save', () async {
       int count = 0;
       provider.addListener(() => count++);

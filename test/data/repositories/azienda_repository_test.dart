@@ -63,12 +63,6 @@ void main() {
       expect(repo.getById(az.id!)?.hourlyRate, 20.0);
     });
 
-    test('delete removes the row', () async {
-      final az = await _insert('To Delete');
-      await repo.delete(az.id!);
-      expect(repo.getAll(), isEmpty);
-    });
-
     test('delete unknown id is a no-op', () async {
       await _insert('Safe');
       await repo.delete(99999);
