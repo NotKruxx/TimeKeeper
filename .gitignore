@@ -11,3 +11,7 @@ pubspec.lock
 .DS_Store
 Thumbs.db
 test_db_*/
+lib/core/firebase/firebase_options.dart
+lib/firebase_options.dart
+.env
+lib/core/firebase/firebase_options.dart
