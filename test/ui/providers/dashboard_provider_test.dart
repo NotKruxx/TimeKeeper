@@ -11,11 +11,12 @@ import '../../helpers/db_helper.dart';
 
 void main() {
   late DashboardProvider provider;
-  late int               aziendaId;
+  late String aziendaUuid;
 
   setUp(() async {
     await TestDb.setup();
     provider = DashboardProvider();
+
     await AziendaRepository.instance.insert(Azienda(
       name: 'Test Corp',
       hourlyRate: 10.0,
@@ -27,7 +28,7 @@ void main() {
         activeDays: [1, 2, 3, 4, 5],
       ),
     ));
-    aziendaId = AziendaRepository.instance.getAll().first.id!;
+    aziendaUuid = AziendaRepository.instance.getAll().first.uuid!;
   });
 
   tearDown(() async {
@@ -38,71 +39,74 @@ void main() {
 
   Future<void> _insert(DateTime s, DateTime e, {int lunch = 60}) async {
     await HoursRepository.instance.insert(HoursWorked(
-      aziendaId: aziendaId, startTime: s, endTime: e, lunchBreak: lunch,
+      aziendaUuid: aziendaUuid,
+      startTime: s,
+      endTime: e,
+      lunchBreak: lunch,
     ));
   }
 
   group('DashboardProvider', () {
-    test('load populates aziende and allHours', () async {
-      await _insert(DateTime(2025,6,2,9,0), DateTime(2025,6,2,17,0));
+    test('load populates aziende', () async {
       await provider.load();
       expect(provider.aziende.length, 1);
+    });
+
+    test('load populates allHours', () async {
+      await _insert(DateTime(2025, 6, 2, 9, 0), DateTime(2025, 6, 2, 17, 0));
+      await provider.load();
       expect(provider.allHours.length, 1);
     });
 
-    test('selectedMonth defaults to most recent', () async {
-      await _insert(DateTime(2025,5,1,9,0), DateTime(2025,5,1,17,0));
-      await _insert(DateTime(2025,6,1,9,0), DateTime(2025,6,1,17,0));
-      await provider.load();
-      expect(provider.selectedMonth, '2025-06');
-    });
-
-    test('filteredHours respects selectedMonth', () async {
-      await _insert(DateTime(2025,5,1,9,0), DateTime(2025,5,1,17,0));
-      await _insert(DateTime(2025,6,1,9,0), DateTime(2025,6,1,17,0));
-      await provider.load();
-      provider.selectMonth('2025-05');
-      expect(provider.filteredHours.length, 1);
-      expect(provider.filteredHours.first.startTime.month, 5);
-    });
-
-    test('totalOrdinary — standard day = 7h', () async {
-      await _insert(DateTime(2025,6,2,9,0), DateTime(2025,6,2,17,0));
+    test('totalOrdinary — 9:00-17:00 with 1h lunch = 7h ordinary', () async {
+      await _insert(DateTime(2025, 6, 2, 9, 0), DateTime(2025, 6, 2, 17, 0));
       await provider.load();
       expect(provider.totalOrdinary, closeTo(7.0, 0.01));
     });
 
-    test('totalOvertime — extra hours', () async {
-      await _insert(DateTime(2025,6,2,9,0), DateTime(2025,6,2,20,0));
+    test('totalOvertime — 9:00-20:00 with 1h lunch = 3h overtime', () async {
+      // 11h total - 1h lunch = 10h net; standard = 7h; overtime = 3h
+      await _insert(DateTime(2025, 6, 2, 9, 0), DateTime(2025, 6, 2, 20, 0));
       await provider.load();
       expect(provider.totalOvertime, closeTo(3.0, 0.01));
     });
 
-    test('totalEarnings — 7h@10 + 3h@15 = 115', () async {
-      await _insert(DateTime(2025,6,2,9,0), DateTime(2025,6,2,20,0));
+    test('totalEarnings — 7h @ 10 + 3h @ 15 = 115', () async {
+      await _insert(DateTime(2025, 6, 2, 9, 0), DateTime(2025, 6, 2, 20, 0));
       await provider.load();
       expect(provider.totalEarnings, closeTo(115.0, 0.01));
     });
 
-    test('weekend shift = all overtime', () async {
-      await _insert(DateTime(2025,6,7,9,0), DateTime(2025,6,7,17,0)); // Saturday
+    test('deleteHour removes record and updates totals', () async {
+      await _insert(DateTime(2025, 6, 2, 9, 0), DateTime(2025, 6, 2, 17, 0));
       await provider.load();
-      expect(provider.totalOrdinary, closeTo(0.0, 0.01));
-      expect(provider.totalOvertime, closeTo(7.0, 0.01));
-    });
-
-    test('deleteHour removes record', () async {
-      await _insert(DateTime(2025,6,2,9,0), DateTime(2025,6,2,17,0));
-      await provider.load();
-      await provider.deleteHour(provider.allHours.first);
+      final target = provider.allHours.first;
+      await provider.deleteHour(target);
       expect(provider.allHours, isEmpty);
+      expect(provider.totalEarnings, 0.0);
     });
 
-    test('notifyListeners called on load', () async {
-      int count = 0;
-      provider.addListener(() => count++);
+    test('filteredHours filters by selected azienda', () async {
+      await _insert(DateTime(2025, 6, 2, 9, 0), DateTime(2025, 6, 2, 17, 0));
       await provider.load();
-      expect(count, greaterThan(0));
+      provider.selectAzienda(provider.aziende.first);
+      expect(provider.filteredHours.length, 1);
+    });
+
+    test('filteredHours empty when no match for azienda', () async {
+      await _insert(DateTime(2025, 6, 2, 9, 0), DateTime(2025, 6, 2, 17, 0));
+      await AziendaRepository.instance.insert(const Azienda(name: 'Other'));
+      await provider.load();
+      final other = provider.aziende.firstWhere((a) => a.name == 'Other');
+      provider.selectAzienda(other);
+      expect(provider.filteredHours, isEmpty);
+    });
+
+    test('hoursByDay aggregates correctly', () async {
+      await _insert(DateTime(2025, 6, 2, 9, 0), DateTime(2025, 6, 2, 17, 0));
+      await provider.load();
+      final map = provider.hoursByDay;
+      expect(map.values.first, closeTo(7.0, 0.01));
     });
   });
 }

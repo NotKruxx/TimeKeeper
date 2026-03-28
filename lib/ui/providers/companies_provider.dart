@@ -18,7 +18,7 @@ class CompaniesProvider extends ChangeNotifier {
   }
 
   Future<void> save(Azienda azienda) async {
-    if (azienda.id != null) {
+    if (azienda.uuid != null) {                        // ← era azienda.id
       await AziendaRepository.instance.update(azienda);
     } else {
       await AziendaRepository.instance.insert(azienda);
@@ -27,8 +27,8 @@ class CompaniesProvider extends ChangeNotifier {
     await load();
   }
 
-  Future<void> delete(int id) async {
-    await AziendaRepository.instance.delete(id);
+  Future<void> delete(String uuid) async {             // ← era int id
+    await AziendaRepository.instance.delete(uuid);
     await load();
   }
 }

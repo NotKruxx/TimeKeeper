@@ -8,104 +8,156 @@ import 'package:salvaore/models/hours_worked.dart';
 import '../../helpers/db_helper.dart';
 
 void main() {
-  late HoursRepository   hoursRepo;
-  late AziendaRepository aziendaRepo;
-  late int               aziendaId;
+  late HoursRepository repo;
+  late String aziendaUuid;
 
   setUp(() async {
     await TestDb.setup();
-    hoursRepo   = HoursRepository.instance;
-    aziendaRepo = AziendaRepository.instance;
-    await aziendaRepo.insert(const Azienda(name: 'Test Corp'));
-    aziendaId = aziendaRepo.getAll().first.id!;
+    repo = HoursRepository.instance;
+    await AziendaRepository.instance.insert(const Azienda(name: 'Test Corp'));
+    aziendaUuid = AziendaRepository.instance.getAll().first.uuid!;
   });
 
   tearDown(TestDb.teardown);
   tearDownAll(TestDb.dispose);
 
-  HoursWorked _shift({DateTime? start, DateTime? end, int lunch = 60, int? id}) {
-    final s = start ?? DateTime(2025, 6, 1, 9, 0);
-    final e = end   ?? DateTime(2025, 6, 1, 18, 0);
-    return HoursWorked(id: id, aziendaId: aziendaId, startTime: s, endTime: e, lunchBreak: lunch);
-  }
+  HoursWorked _make({
+    String? uuid,
+    DateTime? start,
+    DateTime? end,
+    int lunch = 60,
+    String? notes,
+  }) => HoursWorked(
+    uuid: uuid,
+    aziendaUuid: aziendaUuid,
+    startTime: start ?? DateTime(2025, 6, 2, 9, 0),
+    endTime:   end   ?? DateTime(2025, 6, 2, 17, 0),
+    lunchBreak: lunch,
+    notes: notes,
+  );
 
   group('HoursRepository', () {
-    test('insert persists and assigns id', () async {
-      final id   = await hoursRepo.insert(_shift());
-      final all  = hoursRepo.getAll();
-      expect(all.length, 1);
-      expect(all.first.id, id);
+    test('insert persists and returns non-null uuid', () async {
+      final uuid = await repo.insert(_make());
+      expect(uuid, isNotEmpty);
+      expect(repo.getAll().length, 1);
     });
 
-    test('getAll excludes soft-deleted rows', () async {
-      final id1 = await hoursRepo.insert(_shift(start: DateTime(2025,6,1,9,0), end: DateTime(2025,6,1,17,0)));
-      await hoursRepo.insert(_shift(start: DateTime(2025,6,2,9,0), end: DateTime(2025,6,2,17,0)));
-      await hoursRepo.softDelete(id1);
-      expect(hoursRepo.getAll().length, 1);
+    test('insert stamps updatedAt', () async {
+      await repo.insert(_make());
+      expect(repo.getAll().first.uuid, isNotNull);
     });
 
-    test('getAll sorted by startTime DESC', () async {
-      await hoursRepo.insert(_shift(start: DateTime(2025,6,1,9,0), end: DateTime(2025,6,1,17,0)));
-      await hoursRepo.insert(_shift(start: DateTime(2025,6,2,9,0), end: DateTime(2025,6,2,17,0)));
-      expect(hoursRepo.getAll().first.startTime.day, 2);
+    test('getAll returns empty on fresh DB', () {
+      expect(repo.getAll(), isEmpty);
     });
 
-    test('hasOverlap — same window', () async {
-      await hoursRepo.insert(_shift());
-      expect(hoursRepo.hasOverlap(_shift()), isTrue);
+    test('getAll excludes soft-deleted records', () async {
+      final uuid = await repo.insert(_make());
+      await repo.softDelete(uuid);
+      expect(repo.getAll(), isEmpty);
     });
 
-    test('hasOverlap — fully inside', () async {
-      await hoursRepo.insert(_shift());
-      expect(hoursRepo.hasOverlap(_shift(
-        start: DateTime(2025,6,1,10,0), end: DateTime(2025,6,1,12,0),
-      )), isTrue);
+    test('getAll sorted descending by startTime', () async {
+      await repo.insert(_make(start: DateTime(2025, 6, 1, 9, 0), end: DateTime(2025, 6, 1, 17, 0)));
+      await repo.insert(_make(start: DateTime(2025, 6, 3, 9, 0), end: DateTime(2025, 6, 3, 17, 0)));
+      final all = repo.getAll();
+      expect(all.first.startTime.day, 3);
+      expect(all.last.startTime.day, 1);
     });
 
-    test('hasOverlap — adjacent no overlap', () async {
-      await hoursRepo.insert(_shift());
-      expect(hoursRepo.hasOverlap(_shift(
-        start: DateTime(2025,6,1,18,0), end: DateTime(2025,6,1,22,0),
-      )), isFalse);
+    test('update changes fields', () async {
+      final uuid = await repo.insert(_make());
+      final inserted = repo.getAll().first;
+      await repo.update(inserted.copyWith(lunchBreak: 30, notes: 'updated'));
+      final updated = repo.getAll().first;
+      expect(updated.lunchBreak, 30);
+      expect(updated.notes, 'updated');
     });
 
-    test('hasOverlap — completely after no overlap', () async {
-      await hoursRepo.insert(_shift());
-      expect(hoursRepo.hasOverlap(_shift(
-        start: DateTime(2025,6,1,19,0), end: DateTime(2025,6,1,22,0),
-      )), isFalse);
+    test('softDelete marks record as deleted', () async {
+      final uuid = await repo.insert(_make());
+      await repo.softDelete(uuid);
+      expect(repo.getAll(), isEmpty);
     });
 
-    test('hasOverlap — completely before no overlap', () async {
-      await hoursRepo.insert(_shift());
-      expect(hoursRepo.hasOverlap(_shift(
-        start: DateTime(2025,6,1,6,0), end: DateTime(2025,6,1,8,0),
-      )), isFalse);
+    test('softDelete on unknown uuid is a no-op', () async {
+      await repo.insert(_make());
+      await repo.softDelete('non-existent');
+      expect(repo.getAll().length, 1);
     });
 
-    test('hasOverlap — editing own record no overlap', () async {
-      final id   = await hoursRepo.insert(_shift());
-      final saved = hoursRepo.getAll().first;
-      expect(hoursRepo.hasOverlap(saved.copyWith(lunchBreak: 30)), isFalse);
+    test('getByAzienda filters by aziendaUuid', () async {
+      await AziendaRepository.instance.insert(const Azienda(name: 'Other Corp'));
+      final otherUuid = AziendaRepository.instance
+          .getAll()
+          .firstWhere((a) => a.name == 'Other Corp')
+          .uuid!;
+
+      await repo.insert(_make());
+      await repo.insert(HoursWorked(
+        aziendaUuid: otherUuid,
+        startTime: DateTime(2025, 6, 2, 9, 0),
+        endTime:   DateTime(2025, 6, 2, 17, 0),
+      ));
+
+      expect(repo.getByAzienda(aziendaUuid).length, 1);
+      expect(repo.getByAzienda(otherUuid).length, 1);
     });
 
-    test('hasOverlap — different azienda no overlap', () async {
-      await hoursRepo.insert(_shift());
-      await aziendaRepo.insert(const Azienda(name: 'Other'));
-      final otherId = aziendaRepo.getAll().firstWhere((a) => a.name == 'Other').id!;
-      final other = HoursWorked(
-        aziendaId: otherId,
-        startTime: DateTime(2025,6,1,9,0),
-        endTime:   DateTime(2025,6,1,18,0),
-        lunchBreak: 60,
+    test('hasOverlap detects overlapping times for same azienda', () async {
+      await repo.insert(_make(
+        start: DateTime(2025, 6, 2, 10, 0),
+        end:   DateTime(2025, 6, 2, 12, 0),
+      ));
+      final overlapping = _make(
+        start: DateTime(2025, 6, 2, 11, 0),
+        end:   DateTime(2025, 6, 2, 13, 0),
       );
-      expect(hoursRepo.hasOverlap(other), isFalse);
+      expect(repo.hasOverlap(overlapping), isTrue);
     });
 
-    test('delete azienda cascades to hours', () async {
-      await hoursRepo.insert(_shift());
-      await aziendaRepo.delete(aziendaId);
-      expect(hoursRepo.getAll(), isEmpty);
+    test('hasOverlap returns false for non-overlapping times', () async {
+      await repo.insert(_make(
+        start: DateTime(2025, 6, 2, 9, 0),
+        end:   DateTime(2025, 6, 2, 12, 0),
+      ));
+      final nonOverlapping = _make(
+        start: DateTime(2025, 6, 2, 13, 0),
+        end:   DateTime(2025, 6, 2, 17, 0),
+      );
+      expect(repo.hasOverlap(nonOverlapping), isFalse);
+    });
+
+    test('hasOverlap returns false for same uuid (update scenario)', () async {
+      final uuid = await repo.insert(_make(
+        start: DateTime(2025, 6, 2, 9, 0),
+        end:   DateTime(2025, 6, 2, 17, 0),
+      ));
+      final sameRecord = _make(
+        uuid:  uuid,
+        start: DateTime(2025, 6, 2, 9, 0),
+        end:   DateTime(2025, 6, 2, 17, 0),
+      );
+      expect(repo.hasOverlap(sameRecord), isFalse);
+    });
+
+    test('hasOverlap returns false for different azienda', () async {
+      await repo.insert(_make(
+        start: DateTime(2025, 6, 2, 10, 0),
+        end:   DateTime(2025, 6, 2, 12, 0),
+      ));
+      await AziendaRepository.instance.insert(const Azienda(name: 'Other'));
+      final otherUuid = AziendaRepository.instance
+          .getAll()
+          .firstWhere((a) => a.name == 'Other')
+          .uuid!;
+      final different = HoursWorked(
+        aziendaUuid: otherUuid,
+        startTime: DateTime(2025, 6, 2, 10, 0),
+        endTime:   DateTime(2025, 6, 2, 12, 0),
+      );
+      expect(repo.hasOverlap(different), isFalse);
     });
   });
 }

@@ -1,20 +1,19 @@
-// lib/models/hours_worked.dart
-
 import 'package:flutter/foundation.dart';
+import 'package:equatable/equatable.dart';
 
 @immutable
-class HoursWorked {
-  final int? id;
-  final int aziendaId;
+class HoursWorked extends Equatable {
+  final String? uuid;
+  final String aziendaUuid;
   final DateTime startTime;
   final DateTime endTime;
-  final int lunchBreak; // minutes
+  final int lunchBreak;
   final String? notes;
-  final bool deleted;  // soft-delete — never hard-delete records
+  final bool deleted;
 
   const HoursWorked({
-    this.id,
-    required this.aziendaId,
+    this.uuid,
+    required this.aziendaUuid,
     required this.startTime,
     required this.endTime,
     this.lunchBreak = 0,
@@ -22,23 +21,22 @@ class HoursWorked {
     this.deleted = false,
   });
 
-  /// Net worked hours, lunch break excluded.
   double get netHours {
     final total = endTime.difference(startTime).inMinutes;
     return (total - lunchBreak) / 60.0;
   }
 
   HoursWorked copyWith({
-    int? id,
-    int? aziendaId,
+    String? uuid,
+    String? aziendaUuid,
     DateTime? startTime,
     DateTime? endTime,
     int? lunchBreak,
     String? notes,
     bool? deleted,
   }) => HoursWorked(
-    id: id ?? this.id,
-    aziendaId: aziendaId ?? this.aziendaId,
+    uuid: uuid ?? this.uuid,
+    aziendaUuid: aziendaUuid ?? this.aziendaUuid,
     startTime: startTime ?? this.startTime,
     endTime: endTime ?? this.endTime,
     lunchBreak: lunchBreak ?? this.lunchBreak,
@@ -47,8 +45,8 @@ class HoursWorked {
   );
 
   Map<String, dynamic> toMap() => {
-    if (id != null) 'id': id,
-    'azienda_id': aziendaId,
+    if (uuid != null) 'uuid': uuid,
+    'azienda_uuid': aziendaUuid,
     'start_time': startTime.toIso8601String(),
     'end_time': endTime.toIso8601String(),
     'lunch_break': lunchBreak,
@@ -57,8 +55,8 @@ class HoursWorked {
   };
 
   factory HoursWorked.fromMap(Map<String, dynamic> m) => HoursWorked(
-    id: m['id'] as int?,
-    aziendaId: m['azienda_id'] as int,
+    uuid: m['uuid'] as String?,
+    aziendaUuid: (m['azienda_uuid'] ?? m['azienda_id']?.toString() ?? '') as String,
     startTime: DateTime.parse(m['start_time'] as String),
     endTime: DateTime.parse(m['end_time'] as String),
     lunchBreak: m['lunch_break'] as int? ?? 0,
@@ -67,11 +65,8 @@ class HoursWorked {
   );
 
   @override
-  bool operator ==(Object other) => identical(this, other) || other is HoursWorked && other.id == id;
+  List<Object?> get props => [uuid, aziendaUuid, startTime, endTime, lunchBreak, notes, deleted];
 
   @override
-  int get hashCode => id.hashCode;
-
-  @override
-  String toString() => 'HoursWorked(id: $id, aziendaId: $aziendaId, start: $startTime)';
+  String toString() => 'HoursWorked(uuid: $uuid, aziendaUuid: $aziendaUuid, start: $startTime)';
 }

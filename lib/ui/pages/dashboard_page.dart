@@ -27,7 +27,6 @@ class DashboardPage extends StatefulWidget {
 }
 
 class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserver {
-  // Refresh when app comes back to foreground (e.g. after editing a record).
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
@@ -58,7 +57,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     final rows = <List<dynamic>>[
       ['Azienda', 'Data', 'Inizio', 'Fine', 'Pausa (min)', 'Ore Ordinarie', 'Ore Straordinario', 'Note'],
       ...hours.map((h) {
-        final az = p.aziendaFor(h.aziendaId);
+        final az = p.aziendaFor(h.aziendaUuid); // ← uuid
         return [
           az?.name ?? 'N/A',
           DateFormat('dd/MM/yyyy').format(h.startTime),
@@ -86,7 +85,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       mimeType: 'text/csv',
     );
 
-    // share_plus v12: use SharePlus.instance.share() instead of Share.shareXFiles()
     await SharePlus.instance.share(
       ShareParams(files: [file], text: 'Report ore lavorate'),
     );
@@ -186,7 +184,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
 }
 
 // ── sub-widgets ───────────────────────────────────────────────────────────────
-// Splitting into small widgets = Flutter only rebuilds what changed.
 
 class _Filters extends StatelessWidget {
   const _Filters({required this.provider});
@@ -226,7 +223,6 @@ class _Filters extends StatelessWidget {
     );
   }
 
-  // Convert 'YYYY-MM' back to a readable label
   String _formatMonthKey(String key) {
     try {
       final parts = key.split('-');
@@ -245,10 +241,10 @@ class _StatsRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cards = [
-      _StatCard(label: 'Ordinarie',    value: provider.totalOrdinary.toStringAsFixed(2),                      icon: Icons.work_outline),
-      _StatCard(label: 'Straordinario', value: provider.totalOvertime.toStringAsFixed(2),                     icon: Icons.timer),
-      _StatCard(label: 'Complessive',  value: (provider.totalOrdinary + provider.totalOvertime).toStringAsFixed(2), icon: Icons.access_time_filled),
-      _StatCard(label: 'Guadagni (€)', value: provider.totalEarnings.toStringAsFixed(2),                      icon: Icons.euro_symbol),
+      _StatCard(label: 'Ordinarie',     value: provider.totalOrdinary.toStringAsFixed(2),                           icon: Icons.work_outline),
+      _StatCard(label: 'Straordinario', value: provider.totalOvertime.toStringAsFixed(2),                           icon: Icons.timer),
+      _StatCard(label: 'Complessive',   value: (provider.totalOrdinary + provider.totalOvertime).toStringAsFixed(2), icon: Icons.access_time_filled),
+      _StatCard(label: 'Guadagni (€)',  value: provider.totalEarnings.toStringAsFixed(2),                           icon: Icons.euro_symbol),
     ];
 
     return LayoutBuilder(builder: (_, c) {
@@ -302,13 +298,13 @@ class _HoursChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final data     = provider.hoursByDay;
-    final days     = data.keys.toList()..sort();
+    final data  = provider.hoursByDay;
+    final days  = data.keys.toList()..sort();
     if (days.isEmpty) return const SizedBox();
 
-    final spots    = List.generate(days.length, (i) => FlSpot(i.toDouble(), data[days[i]]!));
-    final maxY     = (data.values.reduce((a, b) => a > b ? a : b) + 2).ceilToDouble();
-    final primary  = Theme.of(context).colorScheme.primary;
+    final spots   = List.generate(days.length, (i) => FlSpot(i.toDouble(), data[days[i]]!));
+    final maxY    = (data.values.reduce((a, b) => a > b ? a : b) + 2).ceilToDouble();
+    final primary = Theme.of(context).colorScheme.primary;
 
     return SizedBox(
       height: 250,
@@ -381,7 +377,7 @@ class _HoursTable extends StatelessWidget {
           DataColumn(label: Text('Azioni')),
         ],
         rows: provider.filteredHours.map((h) => DataRow(cells: [
-          DataCell(Text(provider.aziendaName(h.aziendaId))),
+          DataCell(Text(provider.aziendaName(h.aziendaUuid))),  // ← uuid
           DataCell(Text(DateFormat('dd/MM/yyyy').format(h.startTime))),
           DataCell(Text(DateFormat('HH:mm').format(h.startTime))),
           DataCell(Text(DateFormat('HH:mm').format(h.endTime))),

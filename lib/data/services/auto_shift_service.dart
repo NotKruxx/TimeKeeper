@@ -19,7 +19,7 @@ class AutoShiftService {
       final config = azienda.scheduleConfig;
       if (!config.enabled ||
           config.automationStartDate == null ||
-          azienda.id == null) { continue; }
+          azienda.uuid == null) { continue; }              // ← era azienda.id == null
 
       final startDate = DateTime.tryParse(config.automationStartDate!);
       if (startDate == null) continue;
@@ -32,7 +32,7 @@ class AutoShiftService {
 
       for (var i = 0; i <= daysToProcess; i++) {
         final date    = startDate.add(Duration(days: i));
-        final dateKey = '${azienda.id}|${_isoDate(date)}';
+        final dateKey = '${azienda.uuid}|${_isoDate(date)}'; // ← era azienda.id
 
         // Idempotency guard
         if (autoGenBox.values.contains(dateKey)) continue;
@@ -44,11 +44,11 @@ class AutoShiftService {
               config.end.hour, config.end.minute);
 
           final shift = HoursWorked(
-            aziendaId:  azienda.id!,
-            startTime:  start,
-            endTime:    end,
-            lunchBreak: config.lunchBreakMinutes,
-            notes:      'Generato automaticamente',
+            aziendaUuid: azienda.uuid!,                     // ← era aziendaId: azienda.id!
+            startTime:   start,
+            endTime:     end,
+            lunchBreak:  config.lunchBreakMinutes,
+            notes:       'Generato automaticamente',
           );
 
           if (!HoursRepository.instance.hasOverlap(shift)) {

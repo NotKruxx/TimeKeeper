@@ -19,7 +19,7 @@ class DashboardProvider extends ChangeNotifier {
   List<HoursWorked> get filteredHours {
     return allHours.where((h) {
       final monthOk   = selectedMonth == null || _monthKey(h.startTime) == selectedMonth;
-      final aziendaOk = selectedAzienda == null || h.aziendaId == selectedAzienda!.id;
+      final aziendaOk = selectedAzienda == null || h.aziendaUuid == selectedAzienda!.uuid; // ← uuid
       return monthOk && aziendaOk;
     }).toList()
       ..sort((a, b) => b.startTime.compareTo(a.startTime));
@@ -27,10 +27,10 @@ class DashboardProvider extends ChangeNotifier {
 
   // ── aggregates ────────────────────────────────────────────────────────────
 
-  double get totalOrdinary  => filteredHours.fold(0.0, (s, h) => s + ordinary(h));
-  double get totalOvertime  => filteredHours.fold(0.0, (s, h) => s + overtime(h));
-  double get totalEarnings  => filteredHours.fold(0.0, (s, h) {
-    final az = aziendaFor(h.aziendaId);
+  double get totalOrdinary => filteredHours.fold(0.0, (s, h) => s + ordinary(h));
+  double get totalOvertime => filteredHours.fold(0.0, (s, h) => s + overtime(h));
+  double get totalEarnings => filteredHours.fold(0.0, (s, h) {
+    final az = aziendaFor(h.aziendaUuid);                                                  // ← uuid
     if (az == null) return s;
     return s + ordinary(h) * az.hourlyRate + overtime(h) * az.overtimeRate;
   });
@@ -46,15 +46,15 @@ class DashboardProvider extends ChangeNotifier {
 
   // ── public helpers ────────────────────────────────────────────────────────
 
-  Azienda? aziendaFor(int id) {
-    try { return aziende.firstWhere((a) => a.id == id); }
+  Azienda? aziendaFor(String uuid) {                                                       // ← String uuid
+    try { return aziende.firstWhere((a) => a.uuid == uuid); }
     catch (_) { return null; }
   }
 
-  String aziendaName(int id) => aziendaFor(id)?.name ?? 'Sconosciuta';
+  String aziendaName(String uuid) => aziendaFor(uuid)?.name ?? 'Sconosciuta';             // ← String uuid
 
   double ordinary(HoursWorked h) {
-    final az = aziendaFor(h.aziendaId);
+    final az = aziendaFor(h.aziendaUuid);                                                  // ← uuid
     if (az == null) return 0;
     final net       = h.netHours;
     final isWorkDay = az.scheduleConfig.activeDays.contains(h.startTime.weekday);
@@ -64,7 +64,7 @@ class DashboardProvider extends ChangeNotifier {
   }
 
   double overtime(HoursWorked h) {
-    final az = aziendaFor(h.aziendaId);
+    final az = aziendaFor(h.aziendaUuid);                                                  // ← uuid
     if (az == null) return 0;
     final net       = h.netHours;
     final isWorkDay = az.scheduleConfig.activeDays.contains(h.startTime.weekday);
@@ -100,8 +100,8 @@ class DashboardProvider extends ChangeNotifier {
   void selectMonth(String? m)     { selectedMonth = m;    notifyListeners(); }
 
   Future<void> deleteHour(HoursWorked h) async {
-    if (h.id == null) return;
-    await HoursRepository.instance.softDelete(h.id!);
+    if (h.uuid == null) return;                                                            // ← uuid
+    await HoursRepository.instance.softDelete(h.uuid!);                                   // ← uuid
     await load();
   }
 

@@ -22,13 +22,13 @@ class HoursRepository {
       ..sort((a, b) => b.startTime.compareTo(a.startTime));
   }
 
-  List<HoursWorked> getByAzienda(int aziendaId) =>
-      getAll().where((h) => h.aziendaId == aziendaId).toList();
+  List<HoursWorked> getByAzienda(String aziendaUuid) =>
+      getAll().where((h) => h.aziendaUuid == aziendaUuid).toList();
 
   bool hasOverlap(HoursWorked hours) {
     return getAll().any((e) {
-      if (e.aziendaId != hours.aziendaId) return false;
-      if (e.id != null && e.id == hours.id) return false;
+      if (e.aziendaUuid != hours.aziendaUuid) return false;
+      if (e.uuid != null && e.uuid == hours.uuid) return false;
       return e.startTime.isBefore(hours.endTime) &&
              e.endTime.isAfter(hours.startTime);
     });
@@ -36,32 +36,32 @@ class HoursRepository {
 
   // ── writes ────────────────────────────────────────────────────────────────
 
-  Future<int> insert(HoursWorked hours) async {
-    final id  = hours.id ?? HiveProvider.instance.nextHoursId();
-    final map = hours.copyWith(id: id).toMap();
-    map['updatedAt'] = DateTime.now().toIso8601String(); // ← LWW stamp
-    await _box.put(id, map);
+  Future<String> insert(HoursWorked hours) async {
+    final uuid = hours.uuid ?? HiveProvider.instance.generateUuid();
+    final map  = hours.copyWith(uuid: uuid).toMap();
+    map['updatedAt'] = DateTime.now().toIso8601String();
+    await _box.put(uuid, map);
     FirebaseService.instance.schedulePush();
-    return id;
+    return uuid;
   }
 
   Future<void> update(HoursWorked hours) async {
-    assert(hours.id != null);
+    assert(hours.uuid != null);
     final map = hours.toMap();
-    map['updatedAt'] = DateTime.now().toIso8601String(); // ← LWW stamp
-    await _box.put(hours.id, map);
+    map['updatedAt'] = DateTime.now().toIso8601String();
+    await _box.put(hours.uuid, map);
     FirebaseService.instance.schedulePush();
   }
 
-  Future<void> softDelete(int id) async {
-    final raw = _box.get(id);
+  Future<void> softDelete(String uuid) async {
+    final raw = _box.get(uuid);
     if (raw == null) return;
     final now = DateTime.now().toIso8601String();
-    await _box.put(id, {
+    await _box.put(uuid, {
       ..._cast(raw),
       'deleted':   1,
-      'deletedAt': now, // ← tombstone per sync
-      'updatedAt': now, // ← LWW stamp
+      'deletedAt': now,
+      'updatedAt': now,
     });
     FirebaseService.instance.schedulePush();
   }

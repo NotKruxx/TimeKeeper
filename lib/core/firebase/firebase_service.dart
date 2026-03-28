@@ -2,6 +2,8 @@
 //
 // Sync strategy: Last-Write-Wins (LWW) via updatedAt + soft deletes (tombstones)
 // Safe for multi-device, offline edits, slow networks, and crashes mid-push.
+//
+// Auth: Google Sign-In + Email/Password con email verification.
 
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -41,6 +43,8 @@ class FirebaseService {
   Stream<User?> get authStateChanges =>
       _disabled ? const Stream.empty() : _fb.authStateChanges();
 
+  // ── Google Sign-In ────────────────────────────────────────────────────────
+
   Future<User?> signInWithGoogle() async {
     if (_disabled) return null;
     try {
@@ -59,16 +63,93 @@ class FirebaseService {
         return (await _fb.signInWithCredential(credential)).user;
       }
     } catch (e) {
-      debugPrint('[Firebase] signIn: $e');
+      debugPrint('[Firebase] signInWithGoogle: $e');
       return null;
     }
   }
+
+  // ── Email + Password ──────────────────────────────────────────────────────
+
+  /// Registra un nuovo utente con email e password.
+  /// Invia automaticamente la mail di verifica.
+  /// Ritorna null e popola [error] in caso di errore.
+  Future<({User? user, String? error})> registerWithEmail({
+    required String email,
+    required String password,
+  }) async {
+    if (_disabled) return (user: null, error: 'disabled');
+    try {
+      final result = await _fb.createUserWithEmailAndPassword(
+        email:    email.trim(),
+        password: password,
+      );
+      // Invia subito la mail di verifica
+      await result.user?.sendEmailVerification();
+      return (user: result.user, error: null);
+    } on FirebaseAuthException catch (e) {
+      return (user: null, error: _authErrorMessage(e.code));
+    } catch (e) {
+      debugPrint('[Firebase] registerWithEmail: $e');
+      return (user: null, error: 'Errore sconosciuto');
+    }
+  }
+
+  /// Login con email e password.
+  /// Blocca l'accesso se l'email non è stata verificata.
+  Future<({User? user, String? error})> signInWithEmail({
+    required String email,
+    required String password,
+  }) async {
+    if (_disabled) return (user: null, error: 'disabled');
+    try {
+      final result = await _fb.signInWithEmailAndPassword(
+        email:    email.trim(),
+        password: password,
+      );
+      final user = result.user;
+      if (user != null && !user.emailVerified) {
+        await _fb.signOut();
+        return (
+          user: null,
+          error: 'Email non verificata. Controlla la tua casella di posta.',
+        );
+      }
+      return (user: user, error: null);
+    } on FirebaseAuthException catch (e) {
+      return (user: null, error: _authErrorMessage(e.code));
+    } catch (e) {
+      debugPrint('[Firebase] signInWithEmail: $e');
+      return (user: null, error: 'Errore sconosciuto');
+    }
+  }
+
+  /// Manda una mail per il reset della password.
+  Future<({bool success, String? error})> sendPasswordReset(String email) async {
+    if (_disabled) return (success: false, error: 'disabled');
+    try {
+      await _fb.sendPasswordResetEmail(email: email.trim());
+      return (success: true, error: null);
+    } on FirebaseAuthException catch (e) {
+      return (success: false, error: _authErrorMessage(e.code));
+    } catch (e) {
+      return (success: false, error: 'Errore sconosciuto');
+    }
+  }
+
+  /// Rimanda la mail di verifica all'utente corrente.
+  Future<void> resendVerificationEmail() async {
+    await _fb.currentUser?.sendEmailVerification();
+  }
+
+  // ── Sign Out ──────────────────────────────────────────────────────────────
 
   Future<void> signOut() async {
     if (_disabled) return;
     await flush();
     await _fb.signOut();
-    if (!kIsWeb) await GoogleSignIn().signOut();
+    if (!kIsWeb) {
+      try { await GoogleSignIn().signOut(); } catch (_) {}
+    }
     await HiveProvider.instance.clearAll();
   }
 
@@ -103,24 +184,20 @@ class FirebaseService {
   }
 
   // ── soft delete (tombstone) ───────────────────────────────────────────────
-  //
-  // IMPORTANT: never delete records directly from Hive.
-  // Always use these methods so the deletion propagates to all devices.
-  // The tombstone (deletedAt field) is picked up by pullAll() on every device.
 
-  Future<void> deleteHour(int id) async {
-    final box = HiveProvider.instance.hours;
-    final existing = box.get(id);
+  Future<void> deleteHour(String uuid) async {
+    final box      = HiveProvider.instance.hours;
+    final existing = box.get(uuid);
     if (existing == null) return;
 
     final record = _cast(existing);
     final now    = DateTime.now().toIso8601String();
     record['deletedAt'] = now;
     record['updatedAt'] = now;
-    await box.put(id, record);
+    await box.put(uuid, record);
 
     if (!_disabled && isSignedIn) {
-      await _col('hours').doc(id.toString()).set(
+      await _col('hours').doc(uuid).set(
         {
           'deletedAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
@@ -130,19 +207,19 @@ class FirebaseService {
     }
   }
 
-  Future<void> deleteAzienda(int id) async {
-    final box = HiveProvider.instance.aziende;
-    final existing = box.get(id);
+  Future<void> deleteAzienda(String uuid) async {
+    final box      = HiveProvider.instance.aziende;
+    final existing = box.get(uuid);
     if (existing == null) return;
 
     final record = _cast(existing);
     final now    = DateTime.now().toIso8601String();
     record['deletedAt'] = now;
     record['updatedAt'] = now;
-    await box.put(id, record);
+    await box.put(uuid, record);
 
     if (!_disabled && isSignedIn) {
-      await _col('aziende').doc(id.toString()).set(
+      await _col('aziende').doc(uuid).set(
         {
           'deletedAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
@@ -157,39 +234,29 @@ class FirebaseService {
   CollectionReference<Map<String, dynamic>> _col(String name) =>
       _fs.collection('users').doc(uid!).collection(name);
 
-  // PULL: merge Firestore into Hive using Last-Write-Wins.
-  //
-  // Rules:
-  //   - Never clears the box.
-  //   - Tombstone (deletedAt != null) → delete from Hive.
-  //   - Remote newer than local → overwrite Hive.
-  //   - Local newer than remote → do nothing (push will handle it).
-  //   - Record missing locally → write it (new from another device).
-
   Future<void> _pullHours() async {
     final snap = await _col('hours').get();
     final box  = HiveProvider.instance.hours;
 
     for (final doc in snap.docs) {
       final remote = doc.data();
-      remote['id'] = int.tryParse(doc.id) ?? 0;
-      final id = remote['id'] as int;
+      remote['uuid'] = doc.id; // doc ID è l'uuid
+      final uuid = doc.id;
 
-      // Tombstone: this record was deleted on another device.
       if (remote['deletedAt'] != null) {
-        await box.delete(id);
+        await box.delete(uuid);
         continue;
       }
 
-      final existing = box.get(id);
+      final existing = box.get(uuid);
 
       if (existing == null) {
-        await box.put(id, remote);
+        await box.put(uuid, remote);
       } else {
         final localTs  = _parseTs(existing['updatedAt']);
         final remoteTs = _parseTs(remote['updatedAt']);
         if (remoteTs != null && (localTs == null || remoteTs.isAfter(localTs))) {
-          await box.put(id, remote);
+          await box.put(uuid, remote);
         }
       }
     }
@@ -201,23 +268,23 @@ class FirebaseService {
 
     for (final doc in snap.docs) {
       final remote = doc.data();
-      remote['id'] = int.tryParse(doc.id) ?? 0;
-      final id = remote['id'] as int;
+      remote['uuid'] = doc.id;
+      final uuid = doc.id;
 
       if (remote['deletedAt'] != null) {
-        await box.delete(id);
+        await box.delete(uuid);
         continue;
       }
 
-      final existing = box.get(id);
+      final existing = box.get(uuid);
 
       if (existing == null) {
-        await box.put(id, remote);
+        await box.put(uuid, remote);
       } else {
         final localTs  = _parseTs(existing['updatedAt']);
         final remoteTs = _parseTs(remote['updatedAt']);
         if (remoteTs != null && (localTs == null || remoteTs.isAfter(localTs))) {
-          await box.put(id, remote);
+          await box.put(uuid, remote);
         }
       }
     }
@@ -231,19 +298,10 @@ class FirebaseService {
       _hasPendingChanges = false;
     } catch (e) {
       debugPrint('[Firebase] push: $e');
-      // _hasPendingChanges stays true → retried on next schedulePush/flush
     } finally {
       _isSyncing = false;
     }
   }
-
-  // PUSH: upsert local records to Firestore using Last-Write-Wins.
-  //
-  // Rules:
-  //   - Fetches current Firestore state first to compare timestamps.
-  //   - Only writes if local updatedAt >= remote updatedAt (or record is new).
-  //   - Tombstoned local records are pushed as tombstones.
-  //   - Respects Firestore 500-op batch limit.
 
   Future<void> _pushHours() async {
     final col       = _col('hours');
@@ -263,15 +321,14 @@ class FirebaseService {
 
     for (final raw in HiveProvider.instance.hours.values) {
       final local    = _cast(raw);
-      final docId    = local['id'].toString();
+      final docId    = local['uuid'] as String?;
+      if (docId == null) continue;
+
       final localTs  = _parseTs(local['updatedAt']);
       final remote   = remoteMap[docId];
       final remoteTs = remote != null ? _parseTs(remote['updatedAt']) : null;
 
-      // Remote is strictly newer → skip, pull already handles it.
-      if (remoteTs != null && localTs != null && remoteTs.isAfter(localTs)) {
-        continue;
-      }
+      if (remoteTs != null && localTs != null && remoteTs.isAfter(localTs)) continue;
 
       final toWrite = Map<String, dynamic>.from(local);
       toWrite['updatedAt'] = FieldValue.serverTimestamp();
@@ -302,14 +359,14 @@ class FirebaseService {
 
     for (final raw in HiveProvider.instance.aziende.values) {
       final local    = _cast(raw);
-      final docId    = local['id'].toString();
+      final docId    = local['uuid'] as String?;
+      if (docId == null) continue;
+
       final localTs  = _parseTs(local['updatedAt']);
       final remote   = remoteMap[docId];
       final remoteTs = remote != null ? _parseTs(remote['updatedAt']) : null;
 
-      if (remoteTs != null && localTs != null && remoteTs.isAfter(localTs)) {
-        continue;
-      }
+      if (remoteTs != null && localTs != null && remoteTs.isAfter(localTs)) continue;
 
       final toWrite = Map<String, dynamic>.from(local);
       toWrite['updatedAt'] = FieldValue.serverTimestamp();
@@ -327,12 +384,27 @@ class FirebaseService {
   Map<String, dynamic> _cast(Map m) =>
       m.map((k, v) => MapEntry(k.toString(), v));
 
-  /// Parses timestamps from DateTime, Firestore Timestamp, or ISO string.
   DateTime? _parseTs(dynamic value) {
     if (value == null) return null;
     if (value is DateTime)  return value;
     if (value is Timestamp) return value.toDate();
     if (value is String)    return DateTime.tryParse(value);
     return null;
+  }
+
+  /// Converte i codici di errore Firebase in messaggi leggibili in italiano.
+  String _authErrorMessage(String code) {
+    switch (code) {
+      case 'email-already-in-use':    return 'Email già in uso.';
+      case 'invalid-email':           return 'Email non valida.';
+      case 'weak-password':           return 'Password troppo debole (min. 6 caratteri).';
+      case 'user-not-found':          return 'Nessun account trovato con questa email.';
+      case 'wrong-password':          return 'Password errata.';
+      case 'user-disabled':           return 'Account disabilitato.';
+      case 'too-many-requests':       return 'Troppi tentativi. Riprova tra qualche minuto.';
+      case 'network-request-failed':  return 'Errore di rete. Controlla la connessione.';
+      case 'invalid-credential':      return 'Credenziali non valide.';
+      default:                        return 'Errore: $code';
+    }
   }
 }

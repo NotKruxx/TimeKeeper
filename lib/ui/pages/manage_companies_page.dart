@@ -25,7 +25,7 @@ class ManageCompaniesPage extends StatelessWidget {
                   itemBuilder: (_, i) => _CompanyTile(
                     azienda: p.aziende[i],
                     onEdit: () => _openEditor(context, p.aziende[i]),
-                    onDelete: () => _confirmDelete(context, p, p.aziende[i].id!),
+                    onDelete: () => _confirmDelete(context, p, p.aziende[i].uuid!), // ← uuid
                   ),
                 ),
       floatingActionButton: FloatingActionButton(
@@ -44,7 +44,7 @@ class ManageCompaniesPage extends StatelessWidget {
     if (context.mounted) context.read<CompaniesProvider>().load();
   }
 
-  Future<void> _confirmDelete(BuildContext context, CompaniesProvider p, int id) async {
+  Future<void> _confirmDelete(BuildContext context, CompaniesProvider p, String uuid) async { // ← String
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -60,7 +60,7 @@ class ManageCompaniesPage extends StatelessWidget {
         ],
       ),
     );
-    if (ok == true) await p.delete(id);
+    if (ok == true) await p.delete(uuid); // ← uuid
   }
 }
 
@@ -116,16 +116,16 @@ class CompanyEditorPage extends StatefulWidget {
 }
 
 class _CompanyEditorPageState extends State<CompanyEditorPage> {
-  final _formKey          = GlobalKey<FormState>();
-  final _nameCtrl         = TextEditingController();
-  final _rateCtrl         = TextEditingController();
-  final _overtimeCtrl     = TextEditingController();
-  final _breakCtrl        = TextEditingController();
+  final _formKey      = GlobalKey<FormState>();
+  final _nameCtrl     = TextEditingController();
+  final _rateCtrl     = TextEditingController();
+  final _overtimeCtrl = TextEditingController();
+  final _breakCtrl    = TextEditingController();
 
-  bool       _autoEnabled  = false;
-  TimeOfDay  _autoStart    = const TimeOfDay(hour: 8,  minute: 0);
-  TimeOfDay  _autoEnd      = const TimeOfDay(hour: 17, minute: 0);
-  List<int>  _activeDays   = [1, 2, 3, 4, 5];
+  bool      _autoEnabled = false;
+  TimeOfDay _autoStart   = const TimeOfDay(hour: 8,  minute: 0);
+  TimeOfDay _autoEnd     = const TimeOfDay(hour: 17, minute: 0);
+  List<int> _activeDays  = [1, 2, 3, 4, 5];
 
   @override
   void initState() {
@@ -186,17 +186,17 @@ class _CompanyEditorPageState extends State<CompanyEditorPage> {
     }
 
     final updated = Azienda(
-      id:           widget.azienda?.id,
+      uuid:         widget.azienda?.uuid,                   // ← era id
       name:         _nameCtrl.text.trim(),
       hourlyRate:   double.tryParse(_rateCtrl.text) ?? 0.0,
       overtimeRate: double.tryParse(_overtimeCtrl.text) ?? 0.0,
       scheduleConfig: ScheduleConfig(
-        enabled:              _autoEnabled,
-        start:                _autoStart,
-        end:                  _autoEnd,
-        activeDays:           _activeDays,
-        lunchBreakMinutes:    int.tryParse(_breakCtrl.text) ?? 0,
-        automationStartDate:  startDate,
+        enabled:             _autoEnabled,
+        start:               _autoStart,
+        end:                 _autoEnd,
+        activeDays:          _activeDays,
+        lunchBreakMinutes:   int.tryParse(_breakCtrl.text) ?? 0,
+        automationStartDate: startDate,
       ),
     );
 

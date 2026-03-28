@@ -11,7 +11,6 @@ import '../../models/azienda.dart';
 import '../../models/hours_worked.dart';
 import '../../ui/providers/dashboard_provider.dart';
 import '../../ui/providers/companies_provider.dart';
-
 import '../../utils/time_rounder.dart';
 
 class AddHoursPage extends StatefulWidget {
@@ -22,9 +21,9 @@ class AddHoursPage extends StatefulWidget {
 }
 
 class _AddHoursPageState extends State<AddHoursPage> {
-  final _formKey            = GlobalKey<FormState>();
-  final _lunchController    = TextEditingController(text: '0');
-  final _notesController    = TextEditingController();
+  final _formKey         = GlobalKey<FormState>();
+  final _lunchController = TextEditingController(text: '0');
+  final _notesController = TextEditingController();
 
   Azienda?  _selectedAzienda;
   DateTime? _startTime;
@@ -67,11 +66,11 @@ class _AddHoursPageState extends State<AddHoursPage> {
       final end   = round ? roundToNearestHalfHour(_endTime!)   : _endTime!;
 
       final entry = HoursWorked(
-        aziendaId:  _selectedAzienda!.id!,
-        startTime:  start,
-        endTime:    end,
-        lunchBreak: int.tryParse(_lunchController.text) ?? 0,
-        notes:      _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
+        aziendaUuid: _selectedAzienda!.uuid!,             // ← era aziendaId: _selectedAzienda!.id!
+        startTime:   start,
+        endTime:     end,
+        lunchBreak:  int.tryParse(_lunchController.text) ?? 0,
+        notes:       _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
       );
 
       if (HoursRepository.instance.hasOverlap(entry)) {
@@ -83,12 +82,9 @@ class _AddHoursPageState extends State<AddHoursPage> {
         return;
       }
 
-      final newId = await HoursRepository.instance.insert(entry);
-
-      // Record sync event
+      await HoursRepository.instance.insert(entry);
 
       if (!mounted) return;
-      // Invalidate dashboard
       context.read<DashboardProvider>().load();
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -202,7 +198,6 @@ class _DateTimeField extends FormField<DateTime> {
   }) : super(
           initialValue: value,
           builder: (state) {
-            // Keep FormField in sync with external state
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (value != state.value) state.didChange(value);
             });

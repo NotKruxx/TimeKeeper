@@ -82,14 +82,14 @@ class ScheduleConfig {
 
 @immutable
 class Azienda {
-  final int? id;
+  final String? uuid; // ← era int? id
   final String name;
   final double hourlyRate;
   final double overtimeRate;
   final ScheduleConfig scheduleConfig;
 
   const Azienda({
-    this.id,
+    this.uuid,
     required this.name,
     this.hourlyRate = 0.0,
     this.overtimeRate = 0.0,
@@ -105,13 +105,13 @@ class Azienda {
   }
 
   Azienda copyWith({
-    int? id,
+    String? uuid,
     String? name,
     double? hourlyRate,
     double? overtimeRate,
     ScheduleConfig? scheduleConfig,
   }) => Azienda(
-    id: id ?? this.id,
+    uuid: uuid ?? this.uuid,
     name: name ?? this.name,
     hourlyRate: hourlyRate ?? this.hourlyRate,
     overtimeRate: overtimeRate ?? this.overtimeRate,
@@ -119,7 +119,7 @@ class Azienda {
   );
 
   Map<String, dynamic> toMap() => {
-    if (id != null) 'id': id,
+    if (uuid != null) 'uuid': uuid,
     'name': name,
     'hourly_rate': hourlyRate,
     'overtime_rate': overtimeRate,
@@ -127,7 +127,7 @@ class Azienda {
   };
 
   factory Azienda.fromMap(Map<String, dynamic> m) => Azienda(
-    id: m['id'] as int?,
+    uuid: m['uuid'] as String?,
     name: m['name'] as String,
     hourlyRate: (m['hourly_rate'] as num?)?.toDouble() ?? 0.0,
     overtimeRate: (m['overtime_rate'] as num?)?.toDouble() ?? 0.0,
@@ -137,11 +137,11 @@ class Azienda {
   );
 
   @override
-  bool operator ==(Object other) => identical(this, other) || other is Azienda && other.id == id;
+  bool operator ==(Object other) => identical(this, other) || other is Azienda && other.uuid == uuid;
 
   @override
-  int get hashCode => id.hashCode;
+  int get hashCode => uuid.hashCode;
 
   @override
-  String toString() => 'Azienda(id: $id, name: $name)';
+  String toString() => 'Azienda(uuid: $uuid, name: $name)';
 }

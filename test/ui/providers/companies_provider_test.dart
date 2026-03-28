@@ -39,10 +39,26 @@ void main() {
       expect(provider.aziende.first.name, 'Updated');
     });
 
+    test('delete soft-deletes and removes from list', () async {
+      await provider.save(const Azienda(name: 'To Delete'));
+      final uuid = provider.aziende.first.uuid!;
+      await provider.delete(uuid);
+      expect(provider.aziende, isEmpty);
+    });
+
     test('notifies listeners after save', () async {
       int count = 0;
       provider.addListener(() => count++);
       await provider.save(const Azienda(name: 'Test'));
+      expect(count, greaterThan(0));
+    });
+
+    test('notifies listeners after delete', () async {
+      await provider.save(const Azienda(name: 'To Delete'));
+      final uuid = provider.aziende.first.uuid!;
+      int count = 0;
+      provider.addListener(() => count++);
+      await provider.delete(uuid);
       expect(count, greaterThan(0));
     });
   });

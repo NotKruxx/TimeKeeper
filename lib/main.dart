@@ -1,57 +1,56 @@
 // lib/main.dart
- 
+
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:flutter_phoenix/flutter_phoenix.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
- 
+
 import 'core/database/hive_provider.dart';
-import 'core/firebase/firebase_options.dart';  // generato da FlutterFire CLI
+import 'core/firebase/firebase_options.dart';
 import 'core/firebase/firebase_service.dart';
 import 'data/services/auto_shift_service.dart';
 import 'data/services/settings_service.dart';
 import 'ui/main_shell.dart';
+import 'ui/pages/login_page.dart';
 import 'ui/providers/dashboard_provider.dart';
 import 'ui/providers/companies_provider.dart';
- 
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('it_IT', null);
- 
-  // ── Firebase ──────────────────────────────────────────────────────────
+
+  // ── Firebase ───────────────────────────────────────────────────────────────
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
- 
-  // ── Hive (cache locale) ───────────────────────────────────────────────
+
+  // ── Hive (cache locale + migrazione uuid one-shot) ─────────────────────────
   await HiveProvider.instance.init();
- 
-  // ── Settings ──────────────────────────────────────────────────────────
+
+  // ── Settings ───────────────────────────────────────────────────────────────
   await SettingsService.instance.init();
   if (SettingsService.instance.deviceId == null) {
     await SettingsService.instance.setDeviceId(const Uuid().v4());
   }
- 
-  // ── Se già loggato, scarica PRIMA i dati dal cloud ──────────────────
-  // Importante: pullAll() deve venire prima di AutoShiftService.run()
-  // così hasOverlap() vede i turni già esistenti e non li duplica.
+
+  // ── Se già loggato, scarica PRIMA i dati dal cloud ────────────────────────
   if (FirebaseService.instance.isSignedIn) {
     await FirebaseService.instance.pullAll().catchError(
       (e) => debugPrint('[Firebase] pullAll: $e'),
     );
   }
- 
-  // ── Auto-shift — gira DOPO il pull, idempotente ───────────────────────
+
+  // ── Auto-shift — gira DOPO il pull, idempotente ───────────────────────────
   AutoShiftService.instance.run().catchError(
     (e) => debugPrint('[AutoShift] $e'),
   );
- 
+
   runApp(Phoenix(child: const TimeKeeperApp()));
 }
- 
+
 class TimeKeeperApp extends StatelessWidget {
   const TimeKeeperApp({super.key});
- 
+
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
@@ -63,11 +62,11 @@ class TimeKeeperApp extends StatelessWidget {
         title: 'TimeKeeper',
         debugShowCheckedModeBanner: false,
         theme: _buildTheme(),
-        home: const MainShell(),
+        home: const _AuthGate(),
       ),
     );
   }
- 
+
   ThemeData _buildTheme() => ThemeData.dark().copyWith(
     primaryColor: Colors.teal,
     scaffoldBackgroundColor: const Color(0xFF121212),
@@ -97,4 +96,33 @@ class TimeKeeperApp extends StatelessWidget {
       centerTitle: true,
     ),
   );
+}
+
+// ── Auth gate — ascolta Firebase Auth e mostra Login o App ───────────────────
+
+class _AuthGate extends StatelessWidget {
+  const _AuthGate();
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder(
+      stream: FirebaseService.instance.authStateChanges,
+      builder: (context, snapshot) {
+        // In attesa della risposta Firebase
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        // Non loggato → Login
+        if (snapshot.data == null) {
+          return const LoginPage();
+        }
+
+        // Loggato → App principale
+        return const MainShell();
+      },
+    );
+  }
 }
