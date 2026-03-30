@@ -1,7 +1,7 @@
 // lib/ui/pages/dashboard_page.dart
 //
 // Pure UI — zero business logic, zero DB calls.
-// All data comes from DashboardProvider via context.watch / context.read.
+// Tutti i dati arrivano da DashboardProvider via context.watch / context.read.
 
 import 'dart:convert' show utf8;
 import 'dart:typed_data' show Uint8List;
@@ -28,13 +28,6 @@ class DashboardPage extends StatefulWidget {
 
 class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserver {
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      context.read<DashboardProvider>().load();
-    }
-  }
-
-  @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
@@ -46,7 +39,14 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     super.dispose();
   }
 
-  // ── export ─────────────────────────────────────────────────────────────────
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      context.read<DashboardProvider>().load();
+    }
+  }
+
+  // ── Export CSV ───────────────────────────────────────────────
   Future<void> _exportCsv(DashboardProvider p) async {
     final hours = p.filteredHours;
     if (hours.isEmpty) {
@@ -57,7 +57,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     final rows = <List<dynamic>>[
       ['Azienda', 'Data', 'Inizio', 'Fine', 'Pausa (min)', 'Ore Ordinarie', 'Ore Straordinario', 'Note'],
       ...hours.map((h) {
-        final az = p.aziendaFor(h.aziendaUuid); // ← uuid
+        final az = p.aziendaFor(h.aziendaUuid);
         return [
           az?.name ?? 'N/A',
           DateFormat('dd/MM/yyyy').format(h.startTime),
@@ -74,7 +74,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     final csvString = const ListToCsvConverter().convert(rows);
 
     if (kIsWeb) {
-      _snack('CSV generato — usa la condivisione nativa dal tuo browser.');
+      _snack('CSV generato — usa la condivisione nativa dal browser.');
       return;
     }
 
@@ -85,9 +85,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       mimeType: 'text/csv',
     );
 
-    await SharePlus.instance.share(
-      ShareParams(files: [file], text: 'Report ore lavorate'),
-    );
+    await Share.shareXFiles([file], text: 'Report ore lavorate');
   }
 
   void _snack(String msg) {
@@ -95,7 +93,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
-  // ── edit / delete ──────────────────────────────────────────────────────────
+  // ── Edit / Delete ─────────────────────────────────────────────
   Future<void> _delete(DashboardProvider p, HoursWorked h) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -124,7 +122,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     });
   }
 
-  // ── build ──────────────────────────────────────────────────────────────────
+  // ── Build ─────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final p = context.watch<DashboardProvider>();
@@ -140,7 +138,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
           ),
         ],
       ),
-      body: p.isLoading
+      // SOSTITUITO p.isLoading CON p.isReallyLoading:
+      body: p.isReallyLoading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
               onRefresh: p.load,
@@ -183,7 +182,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   }
 }
 
-// ── sub-widgets ───────────────────────────────────────────────────────────────
+// ── Sub-widgets ───────────────────────────────────────────────────────────
 
 class _Filters extends StatelessWidget {
   const _Filters({required this.provider});
@@ -203,7 +202,7 @@ class _Filters extends StatelessWidget {
       children: [
         if (provider.aziende.isNotEmpty)
           DropdownButton<Azienda>(
-            value: provider.selectedAzienda,
+            value: provider.aziende.contains(provider.selectedAzienda) ? provider.selectedAzienda : null,
             items: provider.aziende
                 .map((a) => DropdownMenuItem(value: a, child: Text(a.name)))
                 .toList(),
@@ -212,7 +211,7 @@ class _Filters extends StatelessWidget {
           ),
         if (provider.availableMonths.isNotEmpty)
           DropdownButton<String>(
-            value: provider.selectedMonth,
+            value: provider.availableMonths.contains(provider.selectedMonth) ? provider.selectedMonth : null,
             items: provider.availableMonths
                 .map((m) => DropdownMenuItem(value: m, child: Text(_formatMonthKey(m))))
                 .toList(),
@@ -377,14 +376,14 @@ class _HoursTable extends StatelessWidget {
           DataColumn(label: Text('Azioni')),
         ],
         rows: provider.filteredHours.map((h) => DataRow(cells: [
-          DataCell(Text(provider.aziendaName(h.aziendaUuid))),  // ← uuid
+          DataCell(Text(provider.aziendaName(h.aziendaUuid))),
           DataCell(Text(DateFormat('dd/MM/yyyy').format(h.startTime))),
           DataCell(Text(DateFormat('HH:mm').format(h.startTime))),
           DataCell(Text(DateFormat('HH:mm').format(h.endTime))),
           DataCell(Text('${h.lunchBreak} min')),
           DataCell(Row(children: [
-            IconButton(icon: const Icon(Icons.edit,   color: Colors.orange), onPressed: () => onEdit(h),   tooltip: 'Modifica'),
-            IconButton(icon: const Icon(Icons.delete, color: Colors.red),    onPressed: () => onDelete(h), tooltip: 'Elimina'),
+            IconButton(icon: const Icon(Icons.edit, color: Colors.orange), onPressed: () => onEdit(h), tooltip: 'Modifica'),
+            IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => onDelete(h), tooltip: 'Elimina'),
           ])),
         ])).toList(),
       ),
