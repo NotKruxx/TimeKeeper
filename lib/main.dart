@@ -33,6 +33,12 @@ void main() async {
     await SettingsService.instance.setDeviceId(const Uuid().v4());
   }
 
+  FirebaseService.instance.authStateChanges.listen((user) {
+    print("🔥 AUTH STATE:");
+    print("user: $user");
+    print("uid: ${user?.uid}");
+  });
+
   // ── Se già loggato, scarica PRIMA i dati dal cloud ────────────────────────
   if (FirebaseService.instance.isSignedIn) {
     await FirebaseService.instance.pullAll().catchError(

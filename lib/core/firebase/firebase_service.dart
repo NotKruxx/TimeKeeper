@@ -35,7 +35,6 @@ class FirebaseService {
   bool   _isSyncing         = false;
 
   // ── auth ──────────────────────────────────────────────────────────────────
-
   User?   get currentUser => _disabled ? null : _fb.currentUser;
   bool    get isSignedIn  => currentUser != null;
   String? get uid         => currentUser?.uid;
@@ -44,7 +43,6 @@ class FirebaseService {
       _disabled ? const Stream.empty() : _fb.authStateChanges();
 
   // ── Google Sign-In ────────────────────────────────────────────────────────
-
   Future<User?> signInWithGoogle() async {
     if (_disabled) return null;
     try {
@@ -69,10 +67,6 @@ class FirebaseService {
   }
 
   // ── Email + Password ──────────────────────────────────────────────────────
-
-  /// Registra un nuovo utente con email e password.
-  /// Invia automaticamente la mail di verifica.
-  /// Ritorna null e popola [error] in caso di errore.
   Future<({User? user, String? error})> registerWithEmail({
     required String email,
     required String password,
@@ -83,7 +77,6 @@ class FirebaseService {
         email:    email.trim(),
         password: password,
       );
-      // Invia subito la mail di verifica
       await result.user?.sendEmailVerification();
       return (user: result.user, error: null);
     } on FirebaseAuthException catch (e) {
@@ -94,8 +87,6 @@ class FirebaseService {
     }
   }
 
-  /// Login con email e password.
-  /// Blocca l'accesso se l'email non è stata verificata.
   Future<({User? user, String? error})> signInWithEmail({
     required String email,
     required String password,
@@ -123,7 +114,6 @@ class FirebaseService {
     }
   }
 
-  /// Manda una mail per il reset della password.
   Future<({bool success, String? error})> sendPasswordReset(String email) async {
     if (_disabled) return (success: false, error: 'disabled');
     try {
@@ -136,13 +126,11 @@ class FirebaseService {
     }
   }
 
-  /// Rimanda la mail di verifica all'utente corrente.
   Future<void> resendVerificationEmail() async {
     await _fb.currentUser?.sendEmailVerification();
   }
 
   // ── Sign Out ──────────────────────────────────────────────────────────────
-
   Future<void> signOut() async {
     if (_disabled) return;
     await flush();
@@ -154,9 +142,11 @@ class FirebaseService {
   }
 
   // ── public sync API ───────────────────────────────────────────────────────
-
-  /// Full pull from Firestore into Hive. Call on app start / after login.
   Future<void> pullAll() async {
+    print("📥 pullAll chiamato");
+    print("isSignedIn: $isSignedIn");
+    print("uid: $uid");
+
     if (_disabled || !isSignedIn) return;
     _isSyncing = true;
     try {
@@ -168,7 +158,6 @@ class FirebaseService {
     }
   }
 
-  /// Schedules a debounced push (5s). Call after every local write.
   void schedulePush() {
     if (_disabled || !isSignedIn) return;
     _hasPendingChanges = true;
@@ -176,7 +165,6 @@ class FirebaseService {
     _debounce = Timer(_debounceDelay, _push);
   }
 
-  /// Immediate push. Call on page navigation to flush pending changes.
   Future<void> flush() async {
     if (_disabled || !_hasPendingChanges || !isSignedIn) return;
     _debounce?.cancel();
@@ -184,7 +172,6 @@ class FirebaseService {
   }
 
   // ── soft delete (tombstone) ───────────────────────────────────────────────
-
   Future<void> deleteHour(String uuid) async {
     final box      = HiveProvider.instance.hours;
     final existing = box.get(uuid);
@@ -230,7 +217,6 @@ class FirebaseService {
   }
 
   // ── internals ─────────────────────────────────────────────────────────────
-
   CollectionReference<Map<String, dynamic>> _col(String name) =>
       _fs.collection('users').doc(uid!).collection(name);
 
@@ -240,16 +226,22 @@ class FirebaseService {
 
     for (final doc in snap.docs) {
       final remote = doc.data();
-      remote['uuid'] = doc.id; // doc ID è l'uuid
-      final uuid = doc.id;
+      remote['uuid'] = doc.id;
 
+      // Normalize Timestamp -> ISO string
+      remote.forEach((k, v) {
+        if (v is Timestamp) remote[k] = v.toDate().toIso8601String();
+      });
+
+      print('[DEBUG pullHours] doc: ${doc.id}, data: $remote');
+
+      final uuid = doc.id;
       if (remote['deletedAt'] != null) {
         await box.delete(uuid);
         continue;
       }
 
       final existing = box.get(uuid);
-
       if (existing == null) {
         await box.put(uuid, remote);
       } else {
@@ -269,15 +261,21 @@ class FirebaseService {
     for (final doc in snap.docs) {
       final remote = doc.data();
       remote['uuid'] = doc.id;
-      final uuid = doc.id;
 
+      // Normalize Timestamp -> ISO string
+      remote.forEach((k, v) {
+        if (v is Timestamp) remote[k] = v.toDate().toIso8601String();
+      });
+
+      print('[DEBUG pullAziende] doc: ${doc.id}, data: $remote');
+
+      final uuid = doc.id;
       if (remote['deletedAt'] != null) {
         await box.delete(uuid);
         continue;
       }
 
       final existing = box.get(uuid);
-
       if (existing == null) {
         await box.put(uuid, remote);
       } else {
@@ -380,7 +378,6 @@ class FirebaseService {
   }
 
   // ── helpers ───────────────────────────────────────────────────────────────
-
   Map<String, dynamic> _cast(Map m) =>
       m.map((k, v) => MapEntry(k.toString(), v));
 
@@ -392,7 +389,6 @@ class FirebaseService {
     return null;
   }
 
-  /// Converte i codici di errore Firebase in messaggi leggibili in italiano.
   String _authErrorMessage(String code) {
     switch (code) {
       case 'email-already-in-use':    return 'Email già in uso.';
