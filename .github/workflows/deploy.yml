@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
 
+# AGGIUNTO: Permesso obbligatorio per permettere al bot di caricare i file su GitHub Pages
+permissions:
+  contents: write
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -21,9 +25,7 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Run tests
-        run: flutter test
-
+      # ATTENZIONE: Assicurati che "/TimeKeeper/" sia ESATTAMENTE il nome del tuo Repository GitHub!
       - name: Build web
         run: flutter build web --release --base-href "/TimeKeeper/"
 

@@ -1,55 +1,40 @@
 // lib/main.dart
 
-import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:flutter_phoenix/flutter_phoenix.dart';
 import 'package:provider/provider.dart';
-import 'package:uuid/uuid.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'core/database/hive_provider.dart';
-import 'core/firebase/firebase_options.dart';
-import 'core/firebase/firebase_service.dart';
-import 'data/services/auto_shift_service.dart';
-import 'data/services/settings_service.dart';
+import 'core/service/supabase_service.dart';
+import 'core/service/offline_write_queue.dart';
+
+// 1. IMPORT AGGIUNTO QUI
+import 'data/services/settings_service.dart'; 
+
 import 'ui/main_shell.dart';
 import 'ui/pages/login_page.dart';
 import 'ui/providers/dashboard_provider.dart';
 import 'ui/providers/companies_provider.dart';
+import 'ui/providers/data_cache_provider.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('it_IT', null);
 
-  // ── Firebase ───────────────────────────────────────────────────────────────
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-
-  // ── Hive (cache locale + migrazione uuid one-shot) ─────────────────────────
-  await HiveProvider.instance.init();
-
-  // ── Settings ───────────────────────────────────────────────────────────────
-  await SettingsService.instance.init();
-  if (SettingsService.instance.deviceId == null) {
-    await SettingsService.instance.setDeviceId(const Uuid().v4());
-  }
-
-  FirebaseService.instance.authStateChanges.listen((user) {
-    print("🔥 AUTH STATE:");
-    print("user: $user");
-    print("uid: ${user?.uid}");
-  });
-
-  // ── Se già loggato, scarica PRIMA i dati dal cloud ────────────────────────
-  if (FirebaseService.instance.isSignedIn) {
-    await FirebaseService.instance.pullAll().catchError(
-      (e) => debugPrint('[Firebase] pullAll: $e'),
-    );
-  }
-
-  // ── Auto-shift — gira DOPO il pull, idempotente ───────────────────────────
-  AutoShiftService.instance.run().catchError(
-    (e) => debugPrint('[AutoShift] $e'),
+  // ── Supabase ───────────────────────────────────────────────────────────────
+  await Supabase.initialize(
+    url: 'https://tjioanppdzovyepjltug.supabase.co',
+    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRqaW9hbnBwZHpvdnllcGpsdHVnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyNDA4NzAsImV4cCI6MjA5MDgxNjg3MH0.LxwKLTch1YDBE-59JgdNT0L6E-YdHH7mCn6AgRmktBo',
   );
+
+  // 2. INIZIALIZZAZIONE SETTINGS SERVICE AGGIUNTA QUI
+  // Questo risolve l'errore LateInitializationError su SharedPreferences
+  await SettingsService.instance.init();
+
+  // ── Offline Queue ─────────────────────────────────────────────────────────
+  await OfflineWriteQueue.instance.init();
 
   runApp(Phoenix(child: const TimeKeeperApp()));
 }
@@ -61,73 +46,56 @@ class TimeKeeperApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => DashboardProvider()..load()),
-        ChangeNotifierProvider(create: (_) => CompaniesProvider()..load()),
+        ChangeNotifierProvider(create: (_) => DataCacheProvider()),
+        ChangeNotifierProxyProvider<DataCacheProvider, DashboardProvider>(
+          create: (_) => DashboardProvider(),
+          update: (_, cache, dash) => dash!..updateFromCache(cache),
+        ),
+        ChangeNotifierProxyProvider<DataCacheProvider, CompaniesProvider>(
+          create: (_) => CompaniesProvider(),
+          update: (_, cache, comp) => comp!..updateFromCache(cache),
+        ),
       ],
       child: MaterialApp(
         title: 'TimeKeeper',
         debugShowCheckedModeBanner: false,
-        theme: _buildTheme(),
-        home: const _AuthGate(),
+        theme: ThemeData(
+          brightness: Brightness.dark,
+          primarySwatch: Colors.teal,
+          colorScheme: const ColorScheme.dark(
+            primary: Colors.teal,
+            secondary: Colors.tealAccent,
+          ),
+          useMaterial3: true,
+          inputDecorationTheme: InputDecorationTheme(
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            filled: true,
+          ),
+        ),
+        home: const AuthWrapper(),
       ),
     );
   }
-
-  ThemeData _buildTheme() => ThemeData.dark().copyWith(
-    primaryColor: Colors.teal,
-    scaffoldBackgroundColor: const Color(0xFF121212),
-    colorScheme: const ColorScheme.dark(
-      primary: Colors.teal,
-      secondary: Colors.tealAccent,
-      surface: Color(0xFF1E1E1E),
-    ),
-    cardTheme: CardThemeData(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      color: const Color(0xFF1E1E1E),
-    ),
-    inputDecorationTheme: InputDecorationTheme(
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-    ),
-    elevatedButtonTheme: ElevatedButtonThemeData(
-      style: ElevatedButton.styleFrom(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        backgroundColor: Colors.teal,
-        foregroundColor: Colors.white,
-      ),
-    ),
-    appBarTheme: const AppBarTheme(
-      elevation: 0,
-      backgroundColor: Color(0xFF1E1E1E),
-      centerTitle: true,
-    ),
-  );
 }
 
-// ── Auth gate — ascolta Firebase Auth e mostra Login o App ───────────────────
-
-class _AuthGate extends StatelessWidget {
-  const _AuthGate();
+class AuthWrapper extends StatelessWidget {
+  const AuthWrapper({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder(
-      stream: FirebaseService.instance.authStateChanges,
+    return StreamBuilder<AuthState>(
+      stream: SupabaseService.instance.authStateChanges,
       builder: (context, snapshot) {
-        // In attesa della risposta Firebase
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
+          return const Scaffold(body: Center(child: CircularProgressIndicator()));
         }
-
-        // Non loggato → Login
-        if (snapshot.data == null) {
-          return const LoginPage();
+        
+        final session = snapshot.data?.session;
+        if (session != null) {
+          return const MainShell();
         }
-
-        // Loggato → App principale
-        return const MainShell();
+        
+        return const LoginPage();
       },
     );
   }

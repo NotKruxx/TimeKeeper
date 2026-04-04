@@ -7,9 +7,7 @@ import 'pages/add_hours_page.dart';
 import 'pages/dashboard_page.dart';
 import 'pages/manage_companies_page.dart';
 import 'pages/settings_page.dart';
-import '../core/firebase/firebase_service.dart';
-import 'providers/dashboard_provider.dart';
-import 'providers/companies_provider.dart';
+import 'providers/data_cache_provider.dart'; // IMPORT AGGIUNTO QUI!
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
@@ -30,17 +28,10 @@ class _MainShellState extends State<MainShell> {
   ];
 
   Future<void> _onItemTapped(int index) async {
-    // 1. Flush pending Firebase writes before leaving the current page.
-    await FirebaseService.instance.flush();
-
-    // 2. When returning to Dashboard or Companies, reload fresh data.
-    if (index == 0) {
+    // When returning to Dashboard or Companies, reload fresh data from cache.
+    if (index == 0 || index == 2) {
       if (mounted) {
-        await context.read<DashboardProvider>().load();
-      }
-    } else if (index == 2) {
-      if (mounted) {
-        await context.read<CompaniesProvider>().load();
+        await context.read<DataCacheProvider>().refresh();
       }
     }
 

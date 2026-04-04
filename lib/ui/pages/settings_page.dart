@@ -1,14 +1,14 @@
 // lib/ui/pages/settings_page.dart
 
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
-import '../../core/firebase/firebase_service.dart';
+import '../../core/service/supabase_service.dart';
+import '../../core/service/offline_write_queue.dart'; // Aggiunto per _syncNow
 import '../../data/services/settings_service.dart';
 import '../../data/services/import_export_service.dart';
-import '../../ui/providers/dashboard_provider.dart';
-import '../../ui/providers/companies_provider.dart';
+import '../../ui/providers/data_cache_provider.dart'; // Aggiunto per cache.aziende / cache.hours
+import 'login_page.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -43,25 +43,10 @@ class _SettingsPageState extends State<SettingsPage> {
     finally { if (mounted) setState(() => _isBusy = false); }
   }
 
-  void _reload() {
-    context.read<DashboardProvider>().load();
-    context.read<CompaniesProvider>().load();
-  }
-
   // ── auth ──────────────────────────────────────────────────────────────────
 
   Future<void> _signIn() async {
-    await _setBusy(() async {
-      final user = await FirebaseService.instance.signInWithGoogle();
-      if (user != null && mounted) {
-        await FirebaseService.instance.pullAll();
-        if (!mounted) return;
-        _reload();
-        _snack('Benvenuto, ${user.displayName ?? user.email}!');
-      } else {
-        _snack('Accesso annullato.', isError: true);
-      }
-    });
+    Navigator.push(context, MaterialPageRoute(builder: (context) => const LoginPage()));
   }
 
   Future<void> _signOut() async {
@@ -70,8 +55,8 @@ class _SettingsPageState extends State<SettingsPage> {
       builder: (ctx) => AlertDialog(
         title: const Text('Conferma logout'),
         content: const Text(
-          'I dati locali verranno rimossi da questo dispositivo. '
-          'Sono al sicuro su Firebase e torneranno al prossimo login.',
+          'I dati in sospeso verranno persi se non sincronizzati. '
+          'Sei sicuro di voler uscire?',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Annulla')),
@@ -85,17 +70,18 @@ class _SettingsPageState extends State<SettingsPage> {
     );
     if (confirmed != true) return;
     await _setBusy(() async {
-      await FirebaseService.instance.signOut();
+      await SupabaseService.instance.signOut();
       if (!mounted) return;
-      _reload();
+      // Ricarichiamo la cache per svuotarla
+      await context.read<DataCacheProvider>().refresh();
     });
   }
 
   Future<void> _syncNow() async {
     await _setBusy(() async {
-      await FirebaseService.instance.pullAll();
+      await OfflineWriteQueue.instance.processQueue();
       if (!mounted) return;
-      _reload();
+      await context.read<DataCacheProvider>().refresh();
       _snack('Dati aggiornati!');
     });
   }
@@ -104,22 +90,42 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _exportJson() async {
     await _setBusy(() async {
-      await ImportExportService.instance.exportJson();
+      final cache = context.read<DataCacheProvider>();
+      await ImportExportService.instance.exportJson(
+        aziende: cache.aziende,
+        hours: cache.hours,
+      );
     });
   }
 
   Future<void> _importJson() async {
     await _setBusy(() async {
-      final count = await ImportExportService.instance.importJson();
+      final result = await ImportExportService.instance.importJson();
       if (!mounted) return;
-      if (count == 0) {
-        _snack('Importazione annullata.');
-      } else if (count < 0) {
-        _snack('File non valido o corrotto.', isError: true);
-      } else {
-        _reload();
-        _snack('$count record importati con successo!');
+      
+      if (result == null) {
+        _snack('Importazione annullata o fallita.');
+        return;
       }
+
+      final cache = context.read<DataCacheProvider>();
+      int count = 0;
+
+      // Salviamo tutte le aziende
+      for (final a in result.aziende) {
+        await cache.saveAzienda(a);
+        count++;
+      }
+      
+      // Salviamo tutte le ore
+      for (final h in result.hours) {
+        await cache.saveHour(h);
+        count++;
+      }
+
+      await cache.refresh(); // Ricarichiamo la UI
+
+      _snack('$count record importati con successo!');
     });
   }
 
@@ -130,39 +136,23 @@ class _SettingsPageState extends State<SettingsPage> {
       builder: (ctx) => AlertDialog(
         title: const Text('Importa dal vecchio DB'),
         content: const Text(
-          'Seleziona il file work_hours_app.db dalla vecchia app Android.\n\n'
-          'I dati verranno aggiunti a quelli esistenti senza sovrascrivere. '
-          'Le aziende con lo stesso nome vengono ignorate.',
+          'L\'importazione diretta dal file .db SQLite non è più supportata in questa versione. '
+          'Usa il file JSON generato dalla vecchia app per importare i dati.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Annulla')),
-          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Continua')),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Ho capito')),
         ],
       ),
     );
-    if (confirmed != true) return;
-
-    await _setBusy(() async {
-      final count = await ImportExportService.instance.importSqliteDb();
-      if (!mounted) return;
-      if (count == 0) {
-        _snack('Importazione annullata.');
-      } else if (count < 0) {
-        _snack('File non riconosciuto. Assicurati di selezionare il file .db della vecchia app.', isError: true);
-      } else {
-        _reload();
-        _snack('$count record importati dal vecchio database!');
-      }
-    });
   }
 
   // ── build ─────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
-    final fb       = FirebaseService.instance;
-    final signedIn = fb.isSignedIn;
-    final user     = fb.currentUser;
+    final sb       = SupabaseService.instance;
+    final signedIn = sb.isSignedIn;
+    final user     = sb.currentUser;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Impostazioni')),
@@ -188,18 +178,20 @@ class _SettingsPageState extends State<SettingsPage> {
           if (signedIn) ...[
             ListTile(
               leading: CircleAvatar(
-                backgroundImage: user?.photoURL != null ? NetworkImage(user!.photoURL!) : null,
-                child: user?.photoURL == null
-                    ? Text(user?.displayName?.substring(0, 1).toUpperCase() ?? '?')
+                backgroundImage: user?.userMetadata?['avatar_url'] != null 
+                    ? NetworkImage(user!.userMetadata!['avatar_url'] as String) : null,
+                child: user?.userMetadata?['avatar_url'] == null
+                    ? Text((user?.userMetadata?['full_name'] as String?)?.substring(0, 1).toUpperCase() 
+                        ?? user?.email?.substring(0, 1).toUpperCase() ?? '?')
                     : null,
               ),
-              title: Text(user?.displayName ?? 'Utente'),
+              title: Text(user?.userMetadata?['full_name'] as String? ?? 'Utente'),
               subtitle: Text(user?.email ?? ''),
             ),
             ListTile(
               leading: const Icon(Icons.cloud_done, color: Colors.tealAccent),
               title: const Text('Sincronizzazione attiva'),
-              subtitle: const Text('I dati vengono sincronizzati automaticamente su Firebase.'),
+              subtitle: const Text('I dati vengono sincronizzati automaticamente su Supabase.'),
               trailing: _isBusy
                   ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator())
                   : TextButton(onPressed: _syncNow, child: const Text('Aggiorna')),
@@ -213,7 +205,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ListTile(
               leading: const Icon(Icons.cloud_off, color: Colors.grey),
               title: const Text('Non connesso'),
-              subtitle: const Text('Accedi con Google per sincronizzare i dati su tutti i dispositivi.'),
+              subtitle: const Text('Accedi per sincronizzare i dati su tutti i dispositivi.'),
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),

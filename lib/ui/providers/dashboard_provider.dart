@@ -1,54 +1,53 @@
 // lib/ui/providers/dashboard_provider.dart
 
-import 'dart:async';
 import 'package:flutter/foundation.dart';
-
-import '../../core/firebase/firebase_service.dart';
-import '../../data/repositories/azienda_repository.dart';
-import '../../data/repositories/hours_repository.dart';
-import '../../models/azienda.dart';
-import '../../models/hours_worked.dart';
+import '../../data/models/azienda_model.dart';
+import '../../data/models/hours_worked_model.dart';
+import 'data_cache_provider.dart';
 
 class DashboardProvider extends ChangeNotifier {
-  StreamSubscription? _syncSubscription;
+  List<AziendaModel>     aziende         = [];
+  List<HoursWorkedModel> allHours        = [];
+  List<String>           availableMonths = [];
+  AziendaModel?          selectedAzienda;
+  String?                selectedMonth;
+  bool                   isLoading       = false;
+  String?                error;
 
-  List<Azienda>      aziende          = [];
-  List<HoursWorked>  allHours         = [];
-  List<String>       availableMonths  = [];
-  Azienda?           selectedAzienda;
-  String?            selectedMonth;
-  bool               isLoading        = false;
-
-  // GETTER PER LA UI: Mostra il caricamento se Hive sta caricando 
-  // OPPURE se Firebase sta attivamente scaricando dati la prima volta.
-  bool get isReallyLoading => 
-      isLoading || (allHours.isEmpty && FirebaseService.instance.isSyncing);
-
-  DashboardProvider() {
-    _syncSubscription = FirebaseService.instance.updates.listen((_) {
-      load(); 
-    });
-    load();
+  void updateFromCache(DataCacheProvider cache) {
+    aziende = cache.aziende;
+    allHours = cache.hours;
+    isLoading = cache.isLoading;
+    _computeMonths();
+    notifyListeners();
   }
 
-  @override
-  void dispose() {
-    _syncSubscription?.cancel();
-    super.dispose();
+  void _computeMonths() {
+    final months = allHours
+        // Usa sempre l'ora locale per raggruppare i mesi
+        .map((h) => _monthKey(h.startTime.toLocal()))
+        .toSet()
+        .toList()
+      ..sort((a, b) => b.compareTo(a));
+    availableMonths = months;
+
+    if (selectedMonth != null && !availableMonths.contains(selectedMonth)) {
+      selectedMonth = null;
+    }
+    selectedMonth ??= months.isNotEmpty ? months.first : null;
   }
 
-  // ── filtered view ─────────────────────────────────────────────────────────
+  // ─── filtered view ────────────────────────────────────────────────────────
 
-  List<HoursWorked> get filteredHours {
-    return allHours.where((h) {
-      final monthOk   = selectedMonth == null || _monthKey(h.startTime) == selectedMonth;
-      final aziendaOk = selectedAzienda == null || h.aziendaUuid == selectedAzienda!.uuid;
-      return monthOk && aziendaOk;
-    }).toList()
-      ..sort((a, b) => b.startTime.compareTo(a.startTime));
-  }
+  List<HoursWorkedModel> get filteredHours => allHours.where((h) {
+    // Filtro per mese sull'orario locale
+    final monthOk   = selectedMonth   == null || _monthKey(h.startTime.toLocal()) == selectedMonth;
+    final aziendaOk = selectedAzienda == null || h.aziendaUuid == selectedAzienda!.uuid;
+    return monthOk && aziendaOk;
+  }).toList()
+    ..sort((a, b) => b.startTime.compareTo(a.startTime));
 
-  // ── aggregates ────────────────────────────────────────────────────────────
+  // ─── aggregates ───────────────────────────────────────────────────────────
 
   double get totalOrdinary => filteredHours.fold(0.0, (s, h) => s + ordinary(h));
   double get totalOvertime => filteredHours.fold(0.0, (s, h) => s + overtime(h));
@@ -61,80 +60,66 @@ class DashboardProvider extends ChangeNotifier {
   Map<String, double> get hoursByDay {
     final map = <String, double>{};
     for (final h in filteredHours) {
-      final key = '${h.startTime.day.toString().padLeft(2,'0')}/${h.startTime.month.toString().padLeft(2,'0')}';
+      // Calcoliamo il giorno esatto sul fuso orario dell'utente
+      final localTime = h.startTime.toLocal();
+      final key =
+          '${localTime.day.toString().padLeft(2, '0')}/${localTime.month.toString().padLeft(2, '0')}';
       map[key] = (map[key] ?? 0) + h.netHours;
     }
     return map;
   }
 
-  // ── public helpers ────────────────────────────────────────────────────────
+  // ─── helpers ──────────────────────────────────────────────────────────────
 
-  Azienda? aziendaFor(String uuid) {
-    try { return aziende.firstWhere((a) => a.uuid == uuid); }
-    catch (_) { return null; }
+  AziendaModel? aziendaFor(String uuid) {
+    try {
+      return aziende.firstWhere((a) => a.uuid == uuid);
+    } catch (_) {
+      return null;
+    }
   }
 
   String aziendaName(String uuid) => aziendaFor(uuid)?.name ?? 'Sconosciuta';
 
-  double ordinary(HoursWorked h) {
+  double ordinary(HoursWorkedModel h) {
     final az = aziendaFor(h.aziendaUuid);
     if (az == null) return 0;
-    final net       = h.netHours;
-    final isWorkDay = az.scheduleConfig.activeDays.contains(h.startTime.weekday);
+    
+    // Controlliamo i giorni lavorativi (Lun=1, Dom=7)
+    // ATTENZIONE AL NOME DELLA CHIAVE JSON: prima usavi 'activeDays',
+    // ma in AziendaFormPage abbiamo chiamato la chiave 'work_days'!
+    final activeDays = (az.scheduleConfig['work_days'] as List?)?.cast<int>() ?? [];
+    
+    // Controlliamo il giorno della settimana usando l'ora locale
+    final isWorkDay = activeDays.contains(h.startTime.toLocal().weekday);
     if (!isWorkDay) return 0;
+    
+    final net = h.netHours;
     final threshold = az.standardHoursPerDay;
     return net < threshold ? net : threshold;
   }
 
-  double overtime(HoursWorked h) {
+  double overtime(HoursWorkedModel h) {
     final az = aziendaFor(h.aziendaUuid);
     if (az == null) return 0;
-    final net       = h.netHours;
-    final isWorkDay = az.scheduleConfig.activeDays.contains(h.startTime.weekday);
-    if (!isWorkDay) return net;
+    
+    // Stessa correzione sulla chiave del JSON
+    final activeDays = (az.scheduleConfig['work_days'] as List?)?.cast<int>() ?? [];
+    
+    // Controlliamo il giorno della settimana usando l'ora locale
+    final isWorkDay = activeDays.contains(h.startTime.toLocal().weekday);
+    
+    // Se non è un giorno lavorativo, è TUTTO straordinario
+    if (!isWorkDay) return h.netHours;
+    
+    final net = h.netHours;
     final threshold = az.standardHoursPerDay;
     return net > threshold ? net - threshold : 0;
   }
 
-  // ── commands ──────────────────────────────────────────────────────────────
+  void selectAzienda(AziendaModel? az) { selectedAzienda = az; notifyListeners(); }
+  void selectMonth(String? m)          { selectedMonth   = m;  notifyListeners(); }
 
-  Future<void> load() async {
-    isLoading = true;
-    notifyListeners();
-
-    aziende  = AziendaRepository.instance.getAll();
-    allHours = HoursRepository.instance.getAll();
-
-    final months = allHours
-        .map((h) => _monthKey(h.startTime))
-        .toSet()
-        .toList()
-      ..sort((a, b) => b.compareTo(a));
-    availableMonths = months;
-
-    if (selectedMonth != null && !availableMonths.contains(selectedMonth)) {
-      selectedMonth = null;
-    }
-    if (selectedAzienda != null && !aziende.any((a) => a.uuid == selectedAzienda!.uuid)) {
-      selectedAzienda = null;
-    }
-
-    selectedMonth   ??= months.isNotEmpty ? months.first : null;
-    selectedAzienda ??= aziende.isNotEmpty ? aziende.first : null;
-
-    isLoading = false;
-    notifyListeners();
-  }
-
-  void selectAzienda(Azienda? az) { selectedAzienda = az; notifyListeners(); }
-  void selectMonth(String? m)     { selectedMonth = m;    notifyListeners(); }
-
-  Future<void> deleteHour(HoursWorked h) async {
-    if (h.uuid == null) return;
-    await HoursRepository.instance.softDelete(h.uuid!);
-    await load();
-  }
-
-  String _monthKey(DateTime dt) =>
-      '${dt.year}-${dt.month.toString().padLeft(2, '0')}';
+  // Usiamo sempre questo helper passandogli una data già convertita in local
+  String _monthKey(DateTime dt) => '${dt.year}-${dt.month.toString().padLeft(2, '0')}';
 }

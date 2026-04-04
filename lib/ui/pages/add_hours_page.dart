@@ -5,12 +5,11 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
-import '../../data/repositories/hours_repository.dart';
+import '../../core/service/supabase_service.dart';
+import '../providers/data_cache_provider.dart';
+import '../../data/models/azienda_model.dart';
+import '../../data/models/hours_worked_model.dart';
 import '../../data/services/settings_service.dart';
-import '../../models/azienda.dart';
-import '../../models/hours_worked.dart';
-import '../../ui/providers/dashboard_provider.dart';
-import '../../ui/providers/companies_provider.dart';
 import '../../utils/time_rounder.dart';
 
 class AddHoursPage extends StatefulWidget {
@@ -25,10 +24,10 @@ class _AddHoursPageState extends State<AddHoursPage> {
   final _lunchController = TextEditingController(text: '0');
   final _notesController = TextEditingController();
 
-  Azienda?  _selectedAzienda;
-  DateTime? _startTime;
-  DateTime? _endTime;
-  bool      _isSaving = false;
+  AziendaModel?  _selectedAzienda;
+  DateTime?      _startTime;
+  DateTime?      _endTime;
+  bool           _isSaving = false;
 
   @override
   void dispose() {
@@ -65,32 +64,31 @@ class _AddHoursPageState extends State<AddHoursPage> {
       final start = round ? roundToNearestHalfHour(_startTime!) : _startTime!;
       final end   = round ? roundToNearestHalfHour(_endTime!)   : _endTime!;
 
-      final entry = HoursWorked(
-        aziendaUuid: _selectedAzienda!.uuid!,             // ← era aziendaId: _selectedAzienda!.id!
-        startTime:   start,
-        endTime:     end,
-        lunchBreak:  int.tryParse(_lunchController.text) ?? 0,
-        notes:       _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
+      final uid = SupabaseService.instance.uid;
+      if (uid == null) throw Exception("Utente non loggato");
+
+      final model = HoursWorkedModel.create(
+        userId: uid,
+        aziendaUuid: _selectedAzienda!.uuid,
+        startTime: start,
+        endTime: end,
+        lunchBreak: int.tryParse(_lunchController.text) ?? 0,
+        notes: _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
       );
 
-      if (HoursRepository.instance.hasOverlap(entry)) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text("L'orario si sovrappone con un turno già salvato."),
-          backgroundColor: Colors.red,
-        ));
-        return;
-      }
-
-      await HoursRepository.instance.insert(entry);
+      await context.read<DataCacheProvider>().saveHour(model);
 
       if (!mounted) return;
-      context.read<DashboardProvider>().load();
-
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Ore salvate!')),
       );
       _reset();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Errore imprevisto: $e'),
+        backgroundColor: Colors.red,
+      ));
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -103,14 +101,25 @@ class _AddHoursPageState extends State<AddHoursPage> {
     setState(() {
       _startTime = null;
       _endTime   = null;
+      _selectedAzienda = null; // Resetta anche l'azienda
     });
   }
 
   // ── build ──────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    final aziende = context.watch<CompaniesProvider>().aziende;
-    _selectedAzienda ??= aziende.isNotEmpty ? aziende.first : null;
+    // Ora leggiamo dalla cache ultra-veloce invece del vecchio provider
+    final aziende = context.watch<DataCacheProvider>().aziende;
+
+    // Se c'è un'azienda selezionata ma non esiste più nella lista (es. è stata eliminata), resettiamola.
+    if (_selectedAzienda != null && !aziende.contains(_selectedAzienda)) {
+      _selectedAzienda = null;
+    }
+
+    // Se non abbiamo ancora selezionato nulla e c'è almeno un'azienda, auto-selezioniamo la prima.
+    if (_selectedAzienda == null && aziende.isNotEmpty) {
+      _selectedAzienda = aziende.first;
+    }
 
     return Scaffold(
       appBar: AppBar(title: const Text('Aggiungi Ore')),
@@ -124,7 +133,7 @@ class _AddHoursPageState extends State<AddHoursPage> {
               if (aziende.isEmpty)
                 const _EmptyAziendeHint()
               else
-                DropdownButtonFormField<Azienda>(
+                DropdownButtonFormField<AziendaModel>(
                   value: _selectedAzienda,
                   decoration: const InputDecoration(labelText: 'Azienda'),
                   items: aziende
@@ -174,10 +183,14 @@ class _AddHoursPageState extends State<AddHoursPage> {
                 onPressed: (_startTime == null || _endTime == null || _selectedAzienda == null || _isSaving)
                     ? null
                     : _save,
-                style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.teal,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
                 child: _isSaving
                     ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3))
-                    : const Text('Salva Ore'),
+                    : const Text('Salva Ore', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
               ),
             ],
           ),
@@ -225,11 +238,24 @@ class _EmptyAziendeHint extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 16),
-      child: Text(
-        "Nessuna azienda trovata. Vai alla sezione 'Aziende' per aggiungerne una.",
-        style: TextStyle(color: Colors.grey),
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.teal.withAlpha(20),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.teal.withAlpha(50)),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.info_outline, color: Colors.teal),
+          SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              "Nessuna azienda trovata. Vai alla sezione 'Aziende' per aggiungerne una.",
+              style: TextStyle(color: Colors.white70),
+            ),
+          ),
+        ],
       ),
     );
   }

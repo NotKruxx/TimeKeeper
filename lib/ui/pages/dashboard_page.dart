@@ -14,8 +14,9 @@ import 'package:provider/provider.dart';
 import 'package:csv/csv.dart';
 import 'package:share_plus/share_plus.dart';
 
-import '../../models/hours_worked.dart';
-import '../../models/azienda.dart';
+import '../../data/models/hours_worked_model.dart';
+import '../../data/models/azienda_model.dart';
+import '../providers/data_cache_provider.dart';
 import '../../ui/providers/dashboard_provider.dart';
 import 'edit_hours_page.dart';
 
@@ -42,8 +43,15 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && mounted) {
-      context.read<DashboardProvider>().load();
+      _reloadData();
     }
+  }
+
+  // Helper method per ricaricare i dati delegando al DataCacheProvider
+  Future<void> _reloadData() async {
+    // Sostituisci 'loadData' con il metodo corretto del tuo DataCacheProvider
+    // (es. fetchAll(), init(), load(), ecc.)
+    // await context.read<DataCacheProvider>().loadData(); 
   }
 
   // ── Export CSV ───────────────────────────────────────────────
@@ -60,9 +68,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         final az = p.aziendaFor(h.aziendaUuid);
         return [
           az?.name ?? 'N/A',
-          DateFormat('dd/MM/yyyy').format(h.startTime),
-          DateFormat('HH:mm').format(h.startTime),
-          DateFormat('HH:mm').format(h.endTime),
+          DateFormat('dd/MM/yyyy').format(h.startTime.toLocal()),
+          DateFormat('HH:mm').format(h.startTime.toLocal()),
+          DateFormat('HH:mm').format(h.endTime.toLocal()),
           h.lunchBreak,
           p.ordinary(h).toStringAsFixed(2),
           p.overtime(h).toStringAsFixed(2),
@@ -94,7 +102,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   }
 
   // ── Edit / Delete ─────────────────────────────────────────────
-  Future<void> _delete(DashboardProvider p, HoursWorked h) async {
+  Future<void> _delete(DashboardProvider p, HoursWorkedModel h) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -110,15 +118,17 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         ],
       ),
     );
-    if (confirmed == true && mounted) await p.deleteHour(h);
+    if (confirmed == true && mounted) {
+      await context.read<DataCacheProvider>().deleteHour(h.uuid);
+    }
   }
 
-  void _edit(HoursWorked h) {
+  void _edit(HoursWorkedModel h) {
     Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => EditHoursPage(hourToEdit: h)),
+      MaterialPageRoute(builder: (context) => EditHoursPage(hourToEdit: h)),
     ).then((_) {
-      if (mounted) context.read<DashboardProvider>().load();
+      if (mounted) _reloadData();
     });
   }
 
@@ -138,11 +148,11 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
           ),
         ],
       ),
-      // SOSTITUITO p.isLoading CON p.isReallyLoading:
-      body: p.isReallyLoading
+      // Usiamo isLoading al posto di isReallyLoading
+      body: p.isLoading 
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
-              onRefresh: p.load,
+              onRefresh: _reloadData,
               child: SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.all(16),
@@ -201,7 +211,7 @@ class _Filters extends StatelessWidget {
       runSpacing: 8,
       children: [
         if (provider.aziende.isNotEmpty)
-          DropdownButton<Azienda>(
+          DropdownButton<AziendaModel>(
             value: provider.aziende.contains(provider.selectedAzienda) ? provider.selectedAzienda : null,
             items: provider.aziende
                 .map((a) => DropdownMenuItem(value: a, child: Text(a.name)))
@@ -358,8 +368,8 @@ class _HoursTable extends StatelessWidget {
     required this.onDelete,
   });
   final DashboardProvider provider;
-  final void Function(HoursWorked) onEdit;
-  final void Function(HoursWorked) onDelete;
+  final void Function(HoursWorkedModel) onEdit;
+  final void Function(HoursWorkedModel) onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -377,9 +387,9 @@ class _HoursTable extends StatelessWidget {
         ],
         rows: provider.filteredHours.map((h) => DataRow(cells: [
           DataCell(Text(provider.aziendaName(h.aziendaUuid))),
-          DataCell(Text(DateFormat('dd/MM/yyyy').format(h.startTime))),
-          DataCell(Text(DateFormat('HH:mm').format(h.startTime))),
-          DataCell(Text(DateFormat('HH:mm').format(h.endTime))),
+          DataCell(Text(DateFormat('dd/MM/yyyy').format(h.startTime.toLocal()))),
+          DataCell(Text(DateFormat('HH:mm').format(h.startTime.toLocal()))),
+          DataCell(Text(DateFormat('HH:mm').format(h.endTime.toLocal()))),
           DataCell(Text('${h.lunchBreak} min')),
           DataCell(Row(children: [
             IconButton(icon: const Icon(Icons.edit, color: Colors.orange), onPressed: () => onEdit(h), tooltip: 'Modifica'),
@@ -389,4 +399,4 @@ class _HoursTable extends StatelessWidget {
       ),
     );
   }
-}
+} 

@@ -5,16 +5,15 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
-import '../../data/repositories/azienda_repository.dart';
-import '../../data/repositories/hours_repository.dart';
+import '../providers/data_cache_provider.dart';
+import '../../data/models/azienda_model.dart';
+import '../../data/models/hours_worked_model.dart';
 import '../../data/services/settings_service.dart';
-import '../../models/azienda.dart';
-import '../../models/hours_worked.dart';
 import '../../ui/providers/dashboard_provider.dart';
 import '../../utils/time_rounder.dart';
 
 class EditHoursPage extends StatefulWidget {
-  final HoursWorked hourToEdit;
+  final HoursWorkedModel hourToEdit;
   const EditHoursPage({super.key, required this.hourToEdit});
 
   @override
@@ -26,8 +25,8 @@ class _EditHoursPageState extends State<EditHoursPage> {
   late TextEditingController _lunchCtrl;
   late TextEditingController _notesCtrl;
 
-  List<Azienda> _aziende = [];
-  Azienda? _selectedAzienda;
+  List<AziendaModel> _aziende = [];
+  AziendaModel? _selectedAzienda;
   late DateTime _startTime;
   late DateTime _endTime;
   bool _isSaving = false;
@@ -35,8 +34,8 @@ class _EditHoursPageState extends State<EditHoursPage> {
   @override
   void initState() {
     super.initState();
-    _startTime = widget.hourToEdit.startTime;
-    _endTime = widget.hourToEdit.endTime;
+    _startTime = widget.hourToEdit.startTime.toLocal();
+    _endTime = widget.hourToEdit.endTime.toLocal();
     _lunchCtrl =
         TextEditingController(text: widget.hourToEdit.lunchBreak.toString());
     _notesCtrl =
@@ -51,16 +50,13 @@ class _EditHoursPageState extends State<EditHoursPage> {
     super.dispose();
   }
 
-  Future<void> _loadAziende() async {
-    final list = AziendaRepository.instance.getAll();
-    if (!mounted) return;
-
+  void _loadAziende() {
+    final list = context.read<DataCacheProvider>().aziende;
     setState(() {
       _aziende = list;
-
       _selectedAzienda = list.firstWhere(
         (a) => a.uuid == widget.hourToEdit.aziendaUuid,
-        orElse: () => list.first,
+        orElse: () => list.isNotEmpty ? list.first : widget.hourToEdit.aziendaUuid as dynamic, // Fallback
       );
     });
   }
@@ -98,58 +94,35 @@ class _EditHoursPageState extends State<EditHoursPage> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-
-    if (_selectedAzienda?.uuid == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Errore: azienda non valida')),
-      );
-      return;
-    }
-
     setState(() => _isSaving = true);
 
     try {
       final round = SettingsService.instance.roundTimes;
-
-      final start =
-          round ? roundToNearestHalfHour(_startTime) : _startTime;
-      final end =
-          round ? roundToNearestHalfHour(_endTime) : _endTime;
+      final start = round ? roundToNearestHalfHour(_startTime) : _startTime;
+      final end   = round ? roundToNearestHalfHour(_endTime)   : _endTime;
 
       final updated = widget.hourToEdit.copyWith(
-        aziendaUuid: _selectedAzienda!.uuid!,
-        startTime: start,
-        endTime: end,
-        lunchBreak: int.tryParse(_lunchCtrl.text) ?? 0,
-        notes: _notesCtrl.text.trim().isEmpty
-            ? null
-            : _notesCtrl.text.trim(),
+        aziendaUuid: _selectedAzienda!.uuid,
+        startTime:   start,
+        endTime:     end,
+        lunchBreak:  int.tryParse(_lunchCtrl.text) ?? 0,
+        notes:       _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
       );
 
-      if (HoursRepository.instance.hasOverlap(updated)) {
-        if (!mounted) return;
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content:
-                Text("L'orario si sovrappone con un turno già salvato."),
-            backgroundColor: Colors.red,
-          ),
-        );
-        return;
-      }
-
-      await HoursRepository.instance.update(updated);
+      await context.read<DataCacheProvider>().saveHour(updated);
 
       if (!mounted) return;
-
-      context.read<DashboardProvider>().load();
+      Navigator.pop(context);
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Orario aggiornato!')),
+        const SnackBar(content: Text('Turno aggiornato!')),
       );
-
-      Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Errore imprevisto: $e'),
+        backgroundColor: Colors.red,
+      ));
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -168,7 +141,7 @@ class _EditHoursPageState extends State<EditHoursPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    DropdownButtonFormField<Azienda>(
+                    DropdownButtonFormField<AziendaModel>(
                       value: _selectedAzienda,
                       decoration:
                           const InputDecoration(labelText: 'Azienda'),

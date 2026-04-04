@@ -1,9 +1,11 @@
 // lib/ui/pages/login_page.dart
 
+import 'package:flutter/foundation.dart'; // Aggiunto per kIsWeb
 import 'package:flutter/material.dart';
 import 'package:flutter_phoenix/flutter_phoenix.dart';
+import 'package:supabase_flutter/supabase_flutter.dart'; // Aggiunto per il client auth
 
-import '../../core/firebase/firebase_service.dart';
+import '../../core/service/supabase_service.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -38,23 +40,22 @@ class _LoginPageState extends State<LoginPage> {
 
     try {
       if (_isLogin) {
-        final res = await FirebaseService.instance.signInWithEmail(
+        final res = await SupabaseService.instance.signInWithEmail(
           email:    _emailCtrl.text,
           password: _passwordCtrl.text,
         );
-        if (res.error != null) {
-          setState(() => _errorMsg = res.error);
+        if (res.isErr) {
+          setState(() => _errorMsg = res.failure.message);
           return;
         }
-        await FirebaseService.instance.pullAll();
         if (mounted) Phoenix.rebirth(context);
       } else {
-        final res = await FirebaseService.instance.registerWithEmail(
+        final res = await SupabaseService.instance.registerWithEmail(
           email:    _emailCtrl.text,
           password: _passwordCtrl.text,
         );
-        if (res.error != null) {
-          setState(() => _errorMsg = res.error);
+        if (res.isErr) {
+          setState(() => _errorMsg = res.failure.message);
           return;
         }
         setState(() {
@@ -76,13 +77,13 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
     setState(() { _isLoading = true; _errorMsg = null; _successMsg = null; });
-    final res = await FirebaseService.instance.sendPasswordReset(email);
+    final res = await SupabaseService.instance.sendPasswordReset(email);
     setState(() {
       _isLoading = false;
-      if (res.success) {
+      if (res.isOk) {
         _successMsg = 'Email di reset inviata a $email. Controlla la casella di posta.';
       } else {
-        _errorMsg = res.error;
+        _errorMsg = res.failure.message;
       }
     });
   }
@@ -92,15 +93,17 @@ class _LoginPageState extends State<LoginPage> {
   Future<void> _signInWithGoogle() async {
     setState(() { _isLoading = true; _errorMsg = null; _successMsg = null; });
     try {
-      final user = await FirebaseService.instance.signInWithGoogle();
-      if (user == null) {
-        setState(() => _errorMsg = 'Accesso con Google annullato.');
-        return;
-      }
-      await FirebaseService.instance.pullAll();
-      if (mounted) Phoenix.rebirth(context);
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
+      await Supabase.instance.client.auth.signInWithOAuth(
+        OAuthProvider.google,
+        // Su Web usa la finestra del browser, su app mobile userà un deep link
+        redirectTo: kIsWeb ? null : 'io.supabase.timekeeper://login-callback',
+      );
+      // Nota bene: su Flutter Web il metodo signInWithOAuth reindirizza 
+      // automaticamente la pagina. L'esecuzione del codice si ferma qui.
+    } on AuthException catch (e) {
+      if (mounted) setState(() { _errorMsg = e.message; _isLoading = false; });
+    } catch (e) {
+      if (mounted) setState(() { _errorMsg = 'Errore imprevisto: $e'; _isLoading = false; });
     }
   }
 

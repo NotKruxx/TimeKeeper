@@ -1,5 +1,5 @@
 name: salvaore
-description: "TimeKeeper — traccia le ore di lavoro, sync Firebase."
+description: "TimeKeeper — traccia le ore di lavoro, sync Supabase."
 publish_to: 'none'
 version: 2.0.0+1
 
@@ -12,31 +12,28 @@ dependencies:
 
   # ── UI ────────────────────────────────────────────────────────────────────
   cupertino_icons: ^1.0.8
-  fl_chart: ^1.1.1
-  intl: ^0.20.2
+  fl_chart: ^0.70.0
+  intl: ^0.19.0
 
   # ── state management ──────────────────────────────────────────────────────
   provider: ^6.1.2
 
-  # ── local storage ─────────────────────────────────────────────────────────
-  hive: ^2.2.3
-  hive_flutter: ^1.1.0
+  # ── local storage & files ─────────────────────────────────────────────────
+  path: ^1.9.0
   path_provider: ^2.1.3
 
-  # ── firebase ──────────────────────────────────────────────────────────────
-  firebase_core: ^3.6.0
-  firebase_auth: ^5.3.1
-  cloud_firestore: ^5.4.4
-  google_sign_in: ^6.2.0   # v6 — Firebase Auth usa questa versione
+  # ── supabase & network ────────────────────────────────────────────────────
+  supabase_flutter: ^2.6.0
+  connectivity_plus: ^6.0.3
 
-  # ── settings ──────────────────────────────────────────────────────────────
+  # ── settings & queue ──────────────────────────────────────────────────────
   shared_preferences: ^2.2.3
   uuid: ^4.4.0
 
   # ── export / import ───────────────────────────────────────────────────────
   csv: ^6.0.0
-  share_plus: ^12.0.0
-  file_picker: ^10.0.0
+  share_plus: ^10.1.0
+  file_picker: ^8.1.0
 
   # ── app lifecycle ─────────────────────────────────────────────────────────
   flutter_phoenix: ^1.1.1
@@ -44,12 +41,13 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^6.0.0
+  flutter_lints: ^5.0.0
   flutter_launcher_icons: ^0.14.0
 
 flutter:
   uses-material-design: true
 
+# Configurazione UNIFICATA per generare le icone su tutte le piattaforme
 flutter_launcher_icons:
   android: "launcher_icon"
   ios: true
@@ -57,3 +55,8 @@ flutter_launcher_icons:
   min_sdk_android: 21
   adaptive_icon_background: "#ffffff"
   adaptive_icon_foreground: "assets/icon/icon.png"
+  web:
+    generate: true
+    image_path: "assets/icon/icon.png"
+    background_color: "#009688"
+    theme_color: "#009688"
