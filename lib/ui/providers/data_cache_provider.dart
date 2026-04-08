@@ -1,6 +1,7 @@
 // lib/ui/providers/data_cache_provider.dart
 
 import 'package:flutter/foundation.dart';
+import 'package:intl/intl.dart'; // Import necessario per DateFormat
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
@@ -15,6 +16,8 @@ class DataCacheProvider extends ChangeNotifier {
 
   List<AziendaModel> _aziende = [];
   List<HoursWorkedModel> _hours = [];
+  List<Map<String, dynamic>> _deletedShifts = [];
+  
   bool _isLoading = false;
 
   List<AziendaModel> get aziende => _aziende;
@@ -46,12 +49,15 @@ class DataCacheProvider extends ChangeNotifier {
       if (uid == null) {
         _aziende.clear();
         _hours.clear();
+        _deletedShifts.clear(); // Svuota anche la cache della lista nera al logout
         return; 
       }
 
+      // Scarichiamo ANCHE la lista dei giorni cancellati
       final results = await Future.wait([
         client.from('aziende').select().eq('user_id', uid).isFilter('deleted_at', null),
         client.from('hours_worked').select().eq('user_id', uid).isFilter('deleted_at', null),
+        client.from('deleted_shifts').select('day_key, azienda_uuid').eq('user_id', uid),
       ]);
 
       _aziende = (results[0] as List)
@@ -61,8 +67,9 @@ class DataCacheProvider extends ChangeNotifier {
       _hours = (results[1] as List)
           .map((e) => HoursWorkedModel.fromSupabase(e as Map<String, dynamic>))
           .toList();
+      
+      _deletedShifts = (results[2] as List).map((e) => e as Map<String, dynamic>).toList();
           
-      // Lanciamo il motore dei turni automatici dopo aver caricato i dati aggiornati
       await _generateAutomaticShifts();
 
     } catch (e) {
@@ -73,7 +80,7 @@ class DataCacheProvider extends ChangeNotifier {
     }
   }
 
-  // ─── Motore di Generazione Automatica Turni ──────────────────────────────
+  // ─── Motore di Generazione Automatica Turni (con controllo Lista Nera) ───
 
   Future<void> _generateAutomaticShifts() async {
     final now = DateTime.now();
@@ -82,7 +89,6 @@ class DataCacheProvider extends ChangeNotifier {
     for (final az in _aziende) {
       if (az.scheduleConfig['auto_generate'] == true) {
         
-        // Leggiamo la data esatta in cui l'utente ha riattivato l'interruttore
         final sinceStr = az.scheduleConfig['auto_generate_since'] as String?;
         if (sinceStr == null) continue;
 
@@ -93,19 +99,25 @@ class DataCacheProvider extends ChangeNotifier {
 
         if (workDays.isEmpty || startTimeStr == null || endTimeStr == null) continue;
 
-        // Partiamo dalla data registrata (al momento dell'accensione del toggle)
         DateTime startDate = DateTime.parse(sinceStr).toLocal();
-
-        // Azzeriamo le ore per confrontare i giorni in modo pulito
         DateTime currentDay = DateTime(startDate.year, startDate.month, startDate.day);
         final endDay = DateTime(now.year, now.month, now.day);
 
-        // Cicliamo da "data accensione" fino a "oggi"
         while (currentDay.isBefore(endDay) || currentDay.isAtSameMomentAs(endDay)) {
-          // Se è un giorno lavorativo...
           if (workDays.contains(currentDay.weekday)) {
             
-            // Controlliamo se esiste già un turno registrato in quel giorno
+            // CONTROLLO #1: È un giorno che l'utente ha cancellato?
+            final dayKey = DateFormat('yyyy-MM-dd').format(currentDay);
+            final isBlacklisted = _deletedShifts.any(
+              (d) => d['day_key'] == dayKey && d['azienda_uuid'] == az.uuid
+            );
+
+            if (isBlacklisted) {
+              currentDay = currentDay.add(const Duration(days: 1));
+              continue; // Salta questo giorno e non fare nulla
+            }
+            
+            // CONTROLLO #2: Esiste già un turno (manuale o auto) in questo giorno?
             final exists = _hours.any((h) {
               final hLocal = h.startTime.toLocal();
               return h.aziendaUuid == az.uuid &&
@@ -114,18 +126,13 @@ class DataCacheProvider extends ChangeNotifier {
                      hLocal.day == currentDay.day;
             });
 
-            // Se non c'è, creiamo il turno!
             if (!exists) {
               final sParts = startTimeStr.split(':');
               final eParts = endTimeStr.split(':');
-
               DateTime sTime = DateTime(currentDay.year, currentDay.month, currentDay.day, int.parse(sParts[0]), int.parse(sParts[1]));
               DateTime eTime = DateTime(currentDay.year, currentDay.month, currentDay.day, int.parse(eParts[0]), int.parse(eParts[1]));
-
-              // Gestione turni notturni (che finiscono il giorno dopo, es. 22:00 -> 06:00)
               if (eTime.isBefore(sTime)) eTime = eTime.add(const Duration(days: 1)); 
               
-              // Non creiamo il turno di oggi finché non è superata l'ora d'inizio standard
               if (sTime.isBefore(now)) {
                 final newShift = HoursWorkedModel.create(
                   userId: az.userId,
@@ -135,12 +142,9 @@ class DataCacheProvider extends ChangeNotifier {
                   lunchBreak: lunchBreak,
                   notes: 'Turno generato automaticamente',
                 );
-
                 _hours.add(newShift);
                 addedNewShifts = true;
-
                 try {
-                  // Lo mandiamo in background al database (Supabase in UTC)
                   await Supabase.instance.client.from('hours_worked').upsert(newShift.toSupabase());
                 } catch (_) {
                   await OfflineWriteQueue.instance.enqueue(

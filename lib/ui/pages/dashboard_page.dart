@@ -1,7 +1,4 @@
 // lib/ui/pages/dashboard_page.dart
-//
-// Pure UI — zero business logic, zero DB calls.
-// Tutti i dati arrivano da DashboardProvider via context.watch / context.read.
 
 import 'dart:convert' show utf8;
 import 'dart:typed_data' show Uint8List;
@@ -13,7 +10,9 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:provider/provider.dart';
 import 'package:csv/csv.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:supabase_flutter/supabase_flutter.dart'; // Import per Supabase
 
+import '../../core/service/offline_write_queue.dart'; // Import per la coda offline
 import '../../data/models/hours_worked_model.dart';
 import '../../data/models/azienda_model.dart';
 import '../providers/data_cache_provider.dart';
@@ -32,6 +31,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Ricarichiamo i dati quando la pagina diventa visibile
+    _reloadData();
   }
 
   @override
@@ -47,11 +48,10 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     }
   }
 
-  // Helper method per ricaricare i dati delegando al DataCacheProvider
   Future<void> _reloadData() async {
-    // Sostituisci 'loadData' con il metodo corretto del tuo DataCacheProvider
-    // (es. fetchAll(), init(), load(), ecc.)
-    // await context.read<DataCacheProvider>().loadData(); 
+    if (mounted) {
+      await context.read<DataCacheProvider>().refresh();
+    }
   }
 
   // ── Export CSV ───────────────────────────────────────────────
@@ -96,12 +96,15 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     await Share.shareXFiles([file], text: 'Report ore lavorate');
   }
 
-  void _snack(String msg) {
+  void _snack(String msg, {bool isError = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: isError ? Colors.red : Theme.of(context).snackBarTheme.backgroundColor,
+    ));
   }
 
-  // ── Edit / Delete ─────────────────────────────────────────────
+  // ── Edit / Delete (con aggiunta a Lista Nera) ─────────────────────────────
   Future<void> _delete(DashboardProvider p, HoursWorkedModel h) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -119,6 +122,29 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       ),
     );
     if (confirmed == true && mounted) {
+      // Se il turno era stato generato automaticamente, lo aggiungiamo alla lista nera
+      if (h.notes == 'Turno generato automaticamente') {
+        final dayKey = DateFormat('yyyy-MM-dd').format(h.startTime.toLocal());
+        final data = {
+          'user_id': h.userId,
+          'azienda_uuid': h.aziendaUuid,
+          'day_key': dayKey,
+        };
+
+        try {
+          // Proviamo a mandarlo subito a Supabase
+          await Supabase.instance.client.from('deleted_shifts').insert(data);
+        } catch (e) {
+          // Se fallisce (es. offline), lo mettiamo in coda
+          await OfflineWriteQueue.instance.enqueue(
+            table: 'deleted_shifts',
+            action: 'insert',
+            data: data,
+          );
+        }
+      }
+
+      // Ora cancelliamo il turno effettivo dalla UI e dal database
       await context.read<DataCacheProvider>().deleteHour(h.uuid);
     }
   }
@@ -148,7 +174,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
           ),
         ],
       ),
-      // Usiamo isLoading al posto di isReallyLoading
       body: p.isLoading 
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
@@ -399,4 +424,4 @@ class _HoursTable extends StatelessWidget {
       ),
     );
   }
-} 
+}
