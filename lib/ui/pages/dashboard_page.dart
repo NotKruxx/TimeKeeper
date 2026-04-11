@@ -105,7 +105,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   }
 
   // ── Edit / Delete (con aggiunta a Lista Nera) ─────────────────────────────
-  Future<void> _delete(DashboardProvider p, HoursWorkedModel h) async {
+    Future<void> _delete(DashboardProvider p, HoursWorkedModel h) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -122,20 +122,28 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
       ),
     );
     if (confirmed == true && mounted) {
-      // Se il turno era stato generato automaticamente, lo aggiungiamo alla lista nera
       if (h.notes == 'Turno generato automaticamente') {
         final dayKey = DateFormat('yyyy-MM-dd').format(h.startTime.toLocal());
+        
+        // PRENDIAMO L'ID UTENTE DALLA SESSIONE ATTUALE, NON DAL MODELLO (PIÙ SICURO)
+        final uid = Supabase.instance.client.auth.currentUser?.id;
+        if (uid == null) {
+          _snack('Errore: utente non autenticato.', isError: true);
+          return;
+        }
+
         final data = {
-          'user_id': h.userId,
+          'user_id': uid,
           'azienda_uuid': h.aziendaUuid,
           'day_key': dayKey,
         };
 
         try {
-          // Proviamo a mandarlo subito a Supabase
+          print('✍️ TENTATIVO DI SCRITTURA IN deleted_shifts...');
           await Supabase.instance.client.from('deleted_shifts').insert(data);
+          print('✅ SCRITTURA IN deleted_shifts RIUSCITA!');
         } catch (e) {
-          // Se fallisce (es. offline), lo mettiamo in coda
+          print('❌ ERRORE SCRITTURA deleted_shifts: $e'); // <--- L'ERRORE VERO APPARIRÀ QUI
           await OfflineWriteQueue.instance.enqueue(
             table: 'deleted_shifts',
             action: 'insert',
@@ -144,7 +152,6 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
         }
       }
 
-      // Ora cancelliamo il turno effettivo dalla UI e dal database
       await context.read<DataCacheProvider>().deleteHour(h.uuid);
     }
   }
