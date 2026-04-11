@@ -1,7 +1,7 @@
 // lib/ui/providers/data_cache_provider.dart
 
 import 'package:flutter/foundation.dart';
-import 'package:intl/intl.dart'; // Import necessario per DateFormat
+import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
@@ -24,8 +24,9 @@ class DataCacheProvider extends ChangeNotifier {
   List<HoursWorkedModel> get hours => _hours;
   bool get isLoading => _isLoading;
 
-  void _init() {
-    refresh();
+  Future<void> _init() async {
+    await refresh();
+    await _generateAutomaticShifts();
 
     Connectivity().onConnectivityChanged.listen((result) {
       final isConnected = result is List 
@@ -49,29 +50,23 @@ class DataCacheProvider extends ChangeNotifier {
       if (uid == null) {
         _aziende.clear();
         _hours.clear();
-        _deletedShifts.clear(); // Svuota anche la cache della lista nera al logout
+        _deletedShifts.clear();
+        _isLoading = false;
+        notifyListeners();
         return; 
       }
 
-      // Scarichiamo ANCHE la lista dei giorni cancellati
+      // MODIFICA: Rimosso il filtro ".isFilter('deleted_at', null)" perché ora usiamo Hard Delete
       final results = await Future.wait([
-        client.from('aziende').select().eq('user_id', uid).isFilter('deleted_at', null),
-        client.from('hours_worked').select().eq('user_id', uid).isFilter('deleted_at', null),
+        client.from('aziende').select().eq('user_id', uid),
+        client.from('hours_worked').select().eq('user_id', uid),
         client.from('deleted_shifts').select('day_key, azienda_uuid').eq('user_id', uid),
       ]);
 
-      _aziende = (results[0] as List)
-          .map((e) => AziendaModel.fromSupabase(e as Map<String, dynamic>))
-          .toList();
-          
-      _hours = (results[1] as List)
-          .map((e) => HoursWorkedModel.fromSupabase(e as Map<String, dynamic>))
-          .toList();
-      
+      _aziende = (results[0] as List).map((e) => AziendaModel.fromSupabase(e as Map<String, dynamic>)).toList();
+      _hours = (results[1] as List).map((e) => HoursWorkedModel.fromSupabase(e as Map<String, dynamic>)).toList();
       _deletedShifts = (results[2] as List).map((e) => e as Map<String, dynamic>).toList();
-          
-      await _generateAutomaticShifts();
-
+      
     } catch (e) {
       debugPrint('[DataCacheProvider] Refresh error: $e');
     } finally {
@@ -80,8 +75,7 @@ class DataCacheProvider extends ChangeNotifier {
     }
   }
 
-  // ─── Motore di Generazione Automatica Turni (con controllo Lista Nera) ───
-
+  // ─── Motore di Generazione Automatica Turni ──────────────────────────────
   Future<void> _generateAutomaticShifts() async {
     final now = DateTime.now();
     bool addedNewShifts = false;
@@ -106,7 +100,6 @@ class DataCacheProvider extends ChangeNotifier {
         while (currentDay.isBefore(endDay) || currentDay.isAtSameMomentAs(endDay)) {
           if (workDays.contains(currentDay.weekday)) {
             
-            // CONTROLLO #1: È un giorno che l'utente ha cancellato?
             final dayKey = DateFormat('yyyy-MM-dd').format(currentDay);
             final isBlacklisted = _deletedShifts.any(
               (d) => d['day_key'] == dayKey && d['azienda_uuid'] == az.uuid
@@ -114,10 +107,9 @@ class DataCacheProvider extends ChangeNotifier {
 
             if (isBlacklisted) {
               currentDay = currentDay.add(const Duration(days: 1));
-              continue; // Salta questo giorno e non fare nulla
+              continue;
             }
             
-            // CONTROLLO #2: Esiste già un turno (manuale o auto) in questo giorno?
             final exists = _hours.any((h) {
               final hLocal = h.startTime.toLocal();
               return h.aziendaUuid == az.uuid &&
@@ -142,13 +134,26 @@ class DataCacheProvider extends ChangeNotifier {
                   lunchBreak: lunchBreak,
                   notes: 'Turno generato automaticamente',
                 );
-                _hours.add(newShift);
-                addedNewShifts = true;
+                
                 try {
-                  await Supabase.instance.client.from('hours_worked').upsert(newShift.toSupabase());
-                } catch (_) {
+                  await Supabase.instance.client.from('hours_worked').upsert(
+                    newShift.toSupabase(),
+                    onConflict: 'uuid',
+                  );
+                  
+                  _hours.add(newShift);
+                  addedNewShifts = true;
+                } on PostgrestException catch (e) {
+                  if (e.code == '23505') {
+                    print('ℹ️ Turno automatico già esistente, ignorato. ($dayKey)');
+                  } else {
+                    await OfflineWriteQueue.instance.enqueue(
+                      table: 'hours_worked', action: 'insert', data: newShift.toSupabase()
+                    );
+                  }
+                } catch (e) {
                   await OfflineWriteQueue.instance.enqueue(
-                    table: 'hours_worked', action: 'insert', data: newShift.toSupabase()
+                      table: 'hours_worked', action: 'insert', data: newShift.toSupabase()
                   );
                 }
               }
@@ -165,7 +170,6 @@ class DataCacheProvider extends ChangeNotifier {
   }
 
   // ─── Azienda Mutations ───────────────────────────────────────────────────
-
   Future<void> saveAzienda(AziendaModel model) async {
     final index = _aziende.indexWhere((e) => e.uuid == model.uuid);
     if (index >= 0) {
@@ -177,9 +181,7 @@ class DataCacheProvider extends ChangeNotifier {
 
     try {
       await Supabase.instance.client.from('aziende').upsert(model.toSupabase());
-      print('✅ SALVATAGGIO AZIENDA SU SUPABASE RIUSCITO!');
     } catch (e) {
-      print('❌ ERRORE SUPABASE (AZIENDA) RIFIUTATO: $e');
       await OfflineWriteQueue.instance.enqueue(
         table: 'aziende',
         action: 'insert', 
@@ -188,26 +190,7 @@ class DataCacheProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> deleteAzienda(String uuid) async {
-    _aziende.removeWhere((e) => e.uuid == uuid);
-    notifyListeners();
-
-    try {
-      await Supabase.instance.client
-          .from('aziende')
-          .update({'deleted_at': DateTime.now().toUtc().toIso8601String()})
-          .eq('uuid', uuid);
-    } catch (e) {
-      await OfflineWriteQueue.instance.enqueue(
-        table: 'aziende',
-        action: 'delete',
-        data: {'uuid': uuid},
-      );
-    }
-  }
-
   // ─── Hours Mutations ─────────────────────────────────────────────────────
-
   Future<void> saveHour(HoursWorkedModel model) async {
     final index = _hours.indexWhere((e) => e.uuid == model.uuid);
     if (index >= 0) {
@@ -218,14 +201,44 @@ class DataCacheProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await Supabase.instance.client.from('hours_worked').upsert(model.toSupabase());
-      print('✅ ORE SALVATE SU SUPABASE CON SUCCESSO!');
+      await Supabase.instance.client.from('hours_worked').upsert(
+        model.toSupabase(),
+        onConflict: 'uuid',
+      );
+    } on PostgrestException catch (e) {
+      if (e.code == '23505') {
+        print('ℹ️ Rilevato tentativo di salvataggio duplicato per le ore, ignorato. (${model.uuid})');
+      } else {
+        await OfflineWriteQueue.instance.enqueue(
+          table: 'hours_worked',
+          action: 'insert',
+          data: model.toSupabase(),
+        );
+      }
     } catch (e) {
-      print('❌ ERRORE SUPABASE (ORE) RIFIUTATO: $e');
       await OfflineWriteQueue.instance.enqueue(
         table: 'hours_worked',
         action: 'insert',
         data: model.toSupabase(),
+      );
+    }
+  }
+
+  // ─── Delete Mutations (MODIFICATE PER HARD DELETE) ────────────────────────
+  Future<void> deleteAzienda(String uuid) async {
+    _aziende.removeWhere((e) => e.uuid == uuid);
+    notifyListeners();
+
+    try {
+      await Supabase.instance.client
+          .from('aziende')
+          .delete()
+          .eq('uuid', uuid);
+    } catch (e) {
+      await OfflineWriteQueue.instance.enqueue(
+        table: 'aziende',
+        action: 'delete',
+        data: {'uuid': uuid},
       );
     }
   }
@@ -237,7 +250,7 @@ class DataCacheProvider extends ChangeNotifier {
     try {
       await Supabase.instance.client
           .from('hours_worked')
-          .update({'deleted_at': DateTime.now().toUtc().toIso8601String()})
+          .delete()
           .eq('uuid', uuid);
     } catch (e) {
       await OfflineWriteQueue.instance.enqueue(

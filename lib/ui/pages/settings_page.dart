@@ -2,12 +2,13 @@
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart'; // Import per gestire l'errore dell'avatar
 
 import '../../core/service/supabase_service.dart';
-import '../../core/service/offline_write_queue.dart'; // Aggiunto per _syncNow
+import '../../core/service/offline_write_queue.dart';
 import '../../data/services/settings_service.dart';
 import '../../data/services/import_export_service.dart';
-import '../../ui/providers/data_cache_provider.dart'; // Aggiunto per cache.aziende / cache.hours
+import '../../ui/providers/data_cache_provider.dart';
 import 'login_page.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -32,14 +33,14 @@ class _SettingsPageState extends State<SettingsPage> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg),
-      backgroundColor: isError ? Colors.red : Colors.green,
+      backgroundColor: isError ? Colors.red : Theme.of(context).snackBarTheme.backgroundColor,
     ));
   }
 
   Future<void> _setBusy(Future<void> Function() fn) async {
     setState(() => _isBusy = true);
     try { await fn(); }
-    catch (e) { _snack('Errore: $e', isError: true); }
+    catch (e) { _snack(e.toString().replaceAll('Exception: ', ''), isError: true); }
     finally { if (mounted) setState(() => _isBusy = false); }
   }
 
@@ -72,7 +73,7 @@ class _SettingsPageState extends State<SettingsPage> {
     await _setBusy(() async {
       await SupabaseService.instance.signOut();
       if (!mounted) return;
-      // Ricarichiamo la cache per svuotarla
+      // Svuota la cache locale, sarà ricaricata al prossimo login
       await context.read<DataCacheProvider>().refresh();
     });
   }
@@ -80,9 +81,12 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _syncNow() async {
     await _setBusy(() async {
       await OfflineWriteQueue.instance.processQueue();
-      if (!mounted) return;
-      await context.read<DataCacheProvider>().refresh();
-      _snack('Dati aggiornati!');
+      // Dopo aver processato la coda, facciamo un refresh per essere sicuri
+      // di avere lo stato più aggiornato dal server.
+      if (mounted) {
+        await context.read<DataCacheProvider>().refresh();
+      }
+      _snack('Sincronizzazione completata!');
     });
   }
 
@@ -95,6 +99,7 @@ class _SettingsPageState extends State<SettingsPage> {
         aziende: cache.aziende,
         hours: cache.hours,
       );
+      _snack('Esportazione completata!');
     });
   }
 
@@ -104,43 +109,39 @@ class _SettingsPageState extends State<SettingsPage> {
       if (!mounted) return;
       
       if (result == null) {
-        _snack('Importazione annullata o fallita.');
+        // L'errore viene già gestito nel _setBusy, qui non facciamo nulla.
         return;
       }
 
       final cache = context.read<DataCacheProvider>();
       int count = 0;
 
-      // Salviamo tutte le aziende
       for (final a in result.aziende) {
         await cache.saveAzienda(a);
         count++;
       }
-      
-      // Salviamo tutte le ore
       for (final h in result.hours) {
         await cache.saveHour(h);
         count++;
       }
 
-      await cache.refresh(); // Ricarichiamo la UI
+      // Dopo un'importazione massiva, è giusto fare un refresh per allineare tutto
+      await cache.refresh();
 
       _snack('$count record importati con successo!');
     });
   }
 
   Future<void> _importSqliteDb() async {
-    // Mostra avviso prima dell'import
-    final confirmed = await showDialog<bool>(
+    await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Importa dal vecchio DB'),
+        title: const Text('Importa dalla vecchia app'),
         content: const Text(
-          'L\'importazione diretta dal file .db SQLite non è più supportata in questa versione. '
-          'Usa il file JSON generato dalla vecchia app per importare i dati.',
+          'Questa funzione non è più supportata. Usa la funzione di esportazione JSON dalla vecchia app per creare un file di backup compatibile.',
         ),
         actions: [
-          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Ho capito')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Ho capito')),
         ],
       ),
     );
@@ -179,7 +180,12 @@ class _SettingsPageState extends State<SettingsPage> {
             ListTile(
               leading: CircleAvatar(
                 backgroundImage: user?.userMetadata?['avatar_url'] != null 
-                    ? NetworkImage(user!.userMetadata!['avatar_url'] as String) : null,
+                    ? NetworkImage(user!.userMetadata!['avatar_url'] as String) 
+                    : null,
+                onBackgroundImageError: (_, __) {
+                  // Gestisce l'errore 429 (Too Many Requests) o altri problemi di rete
+                  debugPrint("Impossibile caricare l'avatar di Google.");
+                },
                 child: user?.userMetadata?['avatar_url'] == null
                     ? Text((user?.userMetadata?['full_name'] as String?)?.substring(0, 1).toUpperCase() 
                         ?? user?.email?.substring(0, 1).toUpperCase() ?? '?')
@@ -191,10 +197,10 @@ class _SettingsPageState extends State<SettingsPage> {
             ListTile(
               leading: const Icon(Icons.cloud_done, color: Colors.tealAccent),
               title: const Text('Sincronizzazione attiva'),
-              subtitle: const Text('I dati vengono sincronizzati automaticamente su Supabase.'),
+              subtitle: const Text('I dati vengono sincronizzati automaticamente.'),
               trailing: _isBusy
                   ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator())
-                  : TextButton(onPressed: _syncNow, child: const Text('Aggiorna')),
+                  : TextButton(onPressed: _syncNow, child: const Text('Forza Aggiorna')),
             ),
             ListTile(
               leading: const Icon(Icons.logout, color: Colors.red),
@@ -215,10 +221,11 @@ class _SettingsPageState extends State<SettingsPage> {
                     ? const SizedBox(width: 20, height: 20,
                         child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
                     : const Icon(Icons.login),
-                label: const Text('Accedi con Google'),
+                label: const Text('Accedi'),
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   backgroundColor: Colors.teal,
+                  foregroundColor: Colors.white,
                 ),
               ),
             ),
@@ -230,7 +237,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ListTile(
             leading: const Icon(Icons.upload_file, color: Colors.tealAccent),
             title: const Text('Esporta dati (JSON)'),
-            subtitle: const Text('Scarica un backup completo di aziende e ore.'),
+            subtitle: const Text('Crea un backup completo di aziende e ore.'),
             trailing: _isBusy
                 ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator())
                 : const Icon(Icons.chevron_right),
@@ -239,7 +246,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ListTile(
             leading: const Icon(Icons.download_for_offline, color: Colors.orange),
             title: const Text('Importa dati (JSON)'),
-            subtitle: const Text('Ripristina da un backup JSON precedentemente esportato.'),
+            subtitle: const Text('Ripristina da un file di backup.'),
             trailing: _isBusy
                 ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator())
                 : const Icon(Icons.chevron_right),
@@ -248,7 +255,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ListTile(
             leading: const Icon(Icons.storage, color: Colors.grey),
             title: const Text('Importa dalla vecchia app'),
-            subtitle: const Text('Importa il file .db SQLite dalla versione Android precedente.'),
+            subtitle: const Text('Funzione non più disponibile.'),
             trailing: _isBusy
                 ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator())
                 : const Icon(Icons.chevron_right),

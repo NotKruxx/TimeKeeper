@@ -26,7 +26,8 @@ class DashboardPage extends StatefulWidget {
   State<DashboardPage> createState() => _DashboardPageState();
 }
 
-class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserver {
+class _DashboardPageState extends State<DashboardPage>
+    with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
@@ -49,9 +50,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
   }
 
   Future<void> _reloadData() async {
-    if (mounted) {
-      await context.read<DataCacheProvider>().refresh();
-    }
+    return Future.value();
   }
 
   // ── Export CSV ───────────────────────────────────────────────
@@ -63,7 +62,16 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     }
 
     final rows = <List<dynamic>>[
-      ['Azienda', 'Data', 'Inizio', 'Fine', 'Pausa (min)', 'Ore Ordinarie', 'Ore Straordinario', 'Note'],
+      [
+        'Azienda',
+        'Data',
+        'Inizio',
+        'Fine',
+        'Pausa (min)',
+        'Ore Ordinarie',
+        'Ore Straordinario',
+        'Note'
+      ],
       ...hours.map((h) {
         final az = p.aziendaFor(h.aziendaUuid);
         return [
@@ -87,9 +95,9 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     }
 
     final bytes = Uint8List.fromList(utf8.encode(csvString));
-    final file  = XFile.fromData(
+    final file = XFile.fromData(
       bytes,
-      name:     'report_${p.selectedMonth ?? 'all'}.csv',
+      name: 'report_${p.selectedMonth ?? 'all'}.csv',
       mimeType: 'text/csv',
     );
 
@@ -100,19 +108,23 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg),
-      backgroundColor: isError ? Colors.red : Theme.of(context).snackBarTheme.backgroundColor,
+      backgroundColor: isError
+          ? Colors.red
+          : Theme.of(context).snackBarTheme.backgroundColor,
     ));
   }
 
   // ── Edit / Delete (con aggiunta a Lista Nera) ─────────────────────────────
-    Future<void> _delete(DashboardProvider p, HoursWorkedModel h) async {
+  Future<void> _delete(DashboardProvider p, HoursWorkedModel h) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Conferma eliminazione'),
         content: const Text('Vuoi davvero eliminare questo turno?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Annulla')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annulla')),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.pop(ctx, true),
@@ -124,7 +136,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     if (confirmed == true && mounted) {
       if (h.notes == 'Turno generato automaticamente') {
         final dayKey = DateFormat('yyyy-MM-dd').format(h.startTime.toLocal());
-        
+
         // PRENDIAMO L'ID UTENTE DALLA SESSIONE ATTUALE, NON DAL MODELLO (PIÙ SICURO)
         final uid = Supabase.instance.client.auth.currentUser?.id;
         if (uid == null) {
@@ -143,7 +155,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
           await Supabase.instance.client.from('deleted_shifts').insert(data);
           print('✅ SCRITTURA IN deleted_shifts RIUSCITA!');
         } catch (e) {
-          print('❌ ERRORE SCRITTURA deleted_shifts: $e'); // <--- L'ERRORE VERO APPARIRÀ QUI
+          print(
+              '❌ ERRORE SCRITTURA deleted_shifts: $e'); // <--- L'ERRORE VERO APPARIRÀ QUI
           await OfflineWriteQueue.instance.enqueue(
             table: 'deleted_shifts',
             action: 'insert',
@@ -160,9 +173,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
     Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => EditHoursPage(hourToEdit: h)),
-    ).then((_) {
-      if (mounted) _reloadData();
-    });
+    );
   }
 
   // ── Build ─────────────────────────────────────────────────────
@@ -181,7 +192,7 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
           ),
         ],
       ),
-      body: p.isLoading 
+      body: p.isLoading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
               onRefresh: _reloadData,
@@ -208,7 +219,8 @@ class _DashboardPageState extends State<DashboardPage> with WidgetsBindingObserv
                       const SizedBox(height: 24),
                       _HoursChart(provider: p),
                       const SizedBox(height: 24),
-                      Text('Dettaglio Ore', style: Theme.of(context).textTheme.titleLarge),
+                      Text('Dettaglio Ore',
+                          style: Theme.of(context).textTheme.titleLarge),
                       const SizedBox(height: 8),
                       _HoursTable(
                         provider: p,
@@ -244,7 +256,9 @@ class _Filters extends StatelessWidget {
       children: [
         if (provider.aziende.isNotEmpty)
           DropdownButton<AziendaModel>(
-            value: provider.aziende.contains(provider.selectedAzienda) ? provider.selectedAzienda : null,
+            value: provider.aziende.contains(provider.selectedAzienda)
+                ? provider.selectedAzienda
+                : null,
             items: provider.aziende
                 .map((a) => DropdownMenuItem(value: a, child: Text(a.name)))
                 .toList(),
@@ -253,9 +267,12 @@ class _Filters extends StatelessWidget {
           ),
         if (provider.availableMonths.isNotEmpty)
           DropdownButton<String>(
-            value: provider.availableMonths.contains(provider.selectedMonth) ? provider.selectedMonth : null,
+            value: provider.availableMonths.contains(provider.selectedMonth)
+                ? provider.selectedMonth
+                : null,
             items: provider.availableMonths
-                .map((m) => DropdownMenuItem(value: m, child: Text(_formatMonthKey(m))))
+                .map((m) =>
+                    DropdownMenuItem(value: m, child: Text(_formatMonthKey(m))))
                 .toList(),
             onChanged: provider.selectMonth,
             hint: const Text('Seleziona Mese'),
@@ -282,19 +299,40 @@ class _StatsRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cards = [
-      _StatCard(label: 'Ordinarie',     value: provider.totalOrdinary.toStringAsFixed(2),                           icon: Icons.work_outline),
-      _StatCard(label: 'Straordinario', value: provider.totalOvertime.toStringAsFixed(2),                           icon: Icons.timer),
-      _StatCard(label: 'Complessive',   value: (provider.totalOrdinary + provider.totalOvertime).toStringAsFixed(2), icon: Icons.access_time_filled),
-      _StatCard(label: 'Guadagni (€)',  value: provider.totalEarnings.toStringAsFixed(2),                           icon: Icons.euro_symbol),
+      _StatCard(
+          label: 'Ordinarie',
+          value: provider.totalOrdinary.toStringAsFixed(2),
+          icon: Icons.work_outline),
+      _StatCard(
+          label: 'Straordinario',
+          value: provider.totalOvertime.toStringAsFixed(2),
+          icon: Icons.timer),
+      _StatCard(
+          label: 'Complessive',
+          value: (provider.totalOrdinary + provider.totalOvertime)
+              .toStringAsFixed(2),
+          icon: Icons.access_time_filled),
+      _StatCard(
+          label: 'Guadagni (€)',
+          value: provider.totalEarnings.toStringAsFixed(2),
+          icon: Icons.euro_symbol),
     ];
 
     return LayoutBuilder(builder: (_, c) {
       if (c.maxWidth < 750) {
         return Column(
           children: [
-            Row(children: [Expanded(child: cards[0]), const SizedBox(width: 16), Expanded(child: cards[1])]),
+            Row(children: [
+              Expanded(child: cards[0]),
+              const SizedBox(width: 16),
+              Expanded(child: cards[1])
+            ]),
             const SizedBox(height: 16),
-            Row(children: [Expanded(child: cards[2]), const SizedBox(width: 16), Expanded(child: cards[3])]),
+            Row(children: [
+              Expanded(child: cards[2]),
+              const SizedBox(width: 16),
+              Expanded(child: cards[3])
+            ]),
           ],
         );
       }
@@ -309,7 +347,8 @@ class _StatsRow extends StatelessWidget {
 }
 
 class _StatCard extends StatelessWidget {
-  const _StatCard({required this.label, required this.value, required this.icon});
+  const _StatCard(
+      {required this.label, required this.value, required this.icon});
   final String label, value;
   final IconData icon;
 
@@ -323,7 +362,9 @@ class _StatCard extends StatelessWidget {
           children: [
             Icon(icon, size: 28, color: Theme.of(context).colorScheme.primary),
             const SizedBox(height: 8),
-            Text(value, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+            Text(value,
+                style:
+                    const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),
             Text(label, style: TextStyle(color: Colors.grey[400])),
           ],
@@ -339,12 +380,14 @@ class _HoursChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final data  = provider.hoursByDay;
-    final days  = data.keys.toList()..sort();
+    final data = provider.hoursByDay;
+    final days = data.keys.toList()..sort();
     if (days.isEmpty) return const SizedBox();
 
-    final spots   = List.generate(days.length, (i) => FlSpot(i.toDouble(), data[days[i]]!));
-    final maxY    = (data.values.reduce((a, b) => a > b ? a : b) + 2).ceilToDouble();
+    final spots =
+        List.generate(days.length, (i) => FlSpot(i.toDouble(), data[days[i]]!));
+    final maxY =
+        (data.values.reduce((a, b) => a > b ? a : b) + 2).ceilToDouble();
     final primary = Theme.of(context).colorScheme.primary;
 
     return SizedBox(
@@ -365,7 +408,7 @@ class _HoursChart extends StatelessWidget {
                 getTitlesWidget: (v, _) {
                   final i = v.toInt();
                   if (i < 0 || i >= days.length) return const SizedBox();
-                  if (days.length > 10 && i.isOdd)  return const SizedBox();
+                  if (days.length > 10 && i.isOdd) return const SizedBox();
                   return Padding(
                     padding: const EdgeInsets.only(top: 8),
                     child: Text(days[i], style: const TextStyle(fontSize: 10)),
@@ -373,9 +416,12 @@ class _HoursChart extends StatelessWidget {
                 },
               ),
             ),
-            leftTitles:  const AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 40)),
-            topTitles:   const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            leftTitles: const AxisTitles(
+                sideTitles: SideTitles(showTitles: true, reservedSize: 40)),
+            topTitles:
+                const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            rightTitles:
+                const AxisTitles(sideTitles: SideTitles(showTitles: false)),
           ),
           lineBarsData: [
             LineChartBarData(
@@ -384,7 +430,8 @@ class _HoursChart extends StatelessWidget {
               color: primary,
               barWidth: 3,
               dotData: const FlDotData(show: true),
-              belowBarData: BarAreaData(show: true, color: primary.withAlpha(50)),
+              belowBarData:
+                  BarAreaData(show: true, color: primary.withAlpha(50)),
             ),
           ],
         ),
@@ -417,17 +464,28 @@ class _HoursTable extends StatelessWidget {
           DataColumn(label: Text('Pausa')),
           DataColumn(label: Text('Azioni')),
         ],
-        rows: provider.filteredHours.map((h) => DataRow(cells: [
-          DataCell(Text(provider.aziendaName(h.aziendaUuid))),
-          DataCell(Text(DateFormat('dd/MM/yyyy').format(h.startTime.toLocal()))),
-          DataCell(Text(DateFormat('HH:mm').format(h.startTime.toLocal()))),
-          DataCell(Text(DateFormat('HH:mm').format(h.endTime.toLocal()))),
-          DataCell(Text('${h.lunchBreak} min')),
-          DataCell(Row(children: [
-            IconButton(icon: const Icon(Icons.edit, color: Colors.orange), onPressed: () => onEdit(h), tooltip: 'Modifica'),
-            IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => onDelete(h), tooltip: 'Elimina'),
-          ])),
-        ])).toList(),
+        rows: provider.filteredHours
+            .map((h) => DataRow(cells: [
+                  DataCell(Text(provider.aziendaName(h.aziendaUuid))),
+                  DataCell(Text(
+                      DateFormat('dd/MM/yyyy').format(h.startTime.toLocal()))),
+                  DataCell(
+                      Text(DateFormat('HH:mm').format(h.startTime.toLocal()))),
+                  DataCell(
+                      Text(DateFormat('HH:mm').format(h.endTime.toLocal()))),
+                  DataCell(Text('${h.lunchBreak} min')),
+                  DataCell(Row(children: [
+                    IconButton(
+                        icon: const Icon(Icons.edit, color: Colors.orange),
+                        onPressed: () => onEdit(h),
+                        tooltip: 'Modifica'),
+                    IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.red),
+                        onPressed: () => onDelete(h),
+                        tooltip: 'Elimina'),
+                  ])),
+                ]))
+            .toList(),
       ),
     );
   }
