@@ -1,3 +1,5 @@
+// lib/data/models/azienda_model.dart
+
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
@@ -11,7 +13,6 @@ class AziendaModel {
   final double overtimeRate;
   final Map<String, dynamic> scheduleConfig; // JSONB
   final double standardHoursPerDay;
-  final DateTime? deletedAt;
   final DateTime createdAt;
   final DateTime updatedAt;
   final bool isSynced;
@@ -25,14 +26,13 @@ class AziendaModel {
     this.overtimeRate = 0.0,
     required this.scheduleConfig,
     this.standardHoursPerDay = 8.0,
-    this.deletedAt,
     required this.createdAt,
     required this.updatedAt,
     this.isSynced = false,
     this.syncAction = 'none',
   });
 
-  // ─── SQLITE MAPS ──────────────────────────────────────────────────────────
+  // ─── SQLITE MAPS (usato per l'export JSON, manteniamo tutti i campi) ───
 
   Map<String, dynamic> toSqlite() => {
     'uuid': uuid,
@@ -42,11 +42,11 @@ class AziendaModel {
     'overtime_rate': overtimeRate,
     'schedule_config': jsonEncode(scheduleConfig),
     'standard_hours_per_day': standardHoursPerDay,
-    'deleted_at': deletedAt?.toIso8601String(),
     'created_at': createdAt.toIso8601String(),
     'updated_at': updatedAt.toIso8601String(),
     'is_synced': isSynced ? 1 : 0,
     'sync_action': syncAction,
+    // 'deleted_at' rimosso anche da qui per coerenza
   };
 
   factory AziendaModel.fromSqlite(Map<String, dynamic> m) => AziendaModel(
@@ -55,16 +55,17 @@ class AziendaModel {
     name: m['name'] as String,
     hourlyRate: (m['hourly_rate'] as num).toDouble(),
     overtimeRate: (m['overtime_rate'] as num).toDouble(),
-    scheduleConfig: jsonDecode(m['schedule_config'] as String) as Map<String, dynamic>,
+    scheduleConfig: m['schedule_config'] is String 
+        ? jsonDecode(m['schedule_config']) 
+        : m['schedule_config'] as Map<String, dynamic>,
     standardHoursPerDay: (m['standard_hours_per_day'] as num?)?.toDouble() ?? 8.0,
-    deletedAt: m['deleted_at'] != null ? DateTime.parse(m['deleted_at'] as String) : null,
     createdAt: DateTime.parse(m['created_at'] as String),
     updatedAt: DateTime.parse(m['updated_at'] as String),
-    isSynced: (m['is_synced'] as int) == 1,
-    syncAction: m['sync_action'] as String,
+    isSynced: (m['is_synced'] as int? ?? 0) == 1,
+    syncAction: m['sync_action'] as String? ?? 'none',
   );
 
-  // ─── SUPABASE MAPS ────────────────────────────────────────────────────────
+  // ─── SUPABASE MAPS (allineati con il DB senza deleted_at) ──────────────
 
   Map<String, dynamic> toSupabase() => {
     'uuid': uuid,
@@ -72,10 +73,10 @@ class AziendaModel {
     'name': name,
     'hourly_rate': hourlyRate,
     'overtime_rate': overtimeRate,
-    'schedule_config': scheduleConfig, // JSONB nativo
+    'schedule_config': scheduleConfig,
     'standard_hours_per_day': standardHoursPerDay,
-    'deleted_at': deletedAt?.toIso8601String(),
-    'updated_at': updatedAt.toIso8601String(), // LWW
+    'updated_at': updatedAt.toUtc().toIso8601String(),
+    // 'deleted_at' è stato rimosso. Ora il salvataggio funzionerà.
   };
 
   factory AziendaModel.fromSupabase(Map<String, dynamic> m) => AziendaModel(
@@ -86,14 +87,11 @@ class AziendaModel {
     overtimeRate: (m['overtime_rate'] as num).toDouble(),
     scheduleConfig: m['schedule_config'] as Map<String, dynamic>,
     standardHoursPerDay: (m['standard_hours_per_day'] as num?)?.toDouble() ?? 8.0,
-    deletedAt: m['deleted_at'] != null ? DateTime.parse(m['deleted_at'] as String) : null,
     createdAt: DateTime.parse(m['created_at'] as String),
     updatedAt: DateTime.parse(m['updated_at'] as String),
     isSynced: true,
     syncAction: 'none',
   );
-
-  bool get isDeleted => deletedAt != null;
 
   @override
   bool operator ==(Object other) =>

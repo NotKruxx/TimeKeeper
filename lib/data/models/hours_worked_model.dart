@@ -8,14 +8,10 @@ class HoursWorkedModel {
   final String uuid;
   final String userId;
   final String aziendaUuid;
-  
-  // REGOLA D'ORO: Queste date sono conservate ESCLUSIVAMENTE in UTC.
-  final DateTime startTime;
-  final DateTime endTime;
-  
-  final int lunchBreak;      // minuti
+  final DateTime startTime; // Conservata in UTC
+  final DateTime endTime; // Conservata in UTC
+  final int lunchBreak; // minuti
   final String? notes;
-  final DateTime? deletedAt;
   final DateTime createdAt;
   final DateTime updatedAt;
   final bool isSynced;
@@ -29,14 +25,11 @@ class HoursWorkedModel {
     required this.endTime,
     this.lunchBreak = 60,
     this.notes,
-    this.deletedAt,
     required this.createdAt,
     required this.updatedAt,
     this.isSynced = false,
     this.syncAction = 'none',
   });
-
-  // ─── factory constructor ─────────────────────────────────────────────────
 
   factory HoursWorkedModel.create({
     required String userId,
@@ -51,7 +44,6 @@ class HoursWorkedModel {
       uuid: const Uuid().v4(),
       userId: userId,
       aziendaUuid: aziendaUuid,
-      // Forziamo in UTC al momento della creazione
       startTime: startTime.toUtc(),
       endTime: endTime.toUtc(),
       lunchBreak: lunchBreak,
@@ -63,88 +55,70 @@ class HoursWorkedModel {
     );
   }
 
-  // ─── computed ────────────────────────────────────────────────────────────
-
-  /// Minuti lavorati netti (mai negativi)
-  /// Essendo startTime e endTime in UTC puro, la differenza in minuti 
-  /// non verrà mai sballata dal cambio dell'ora legale (DST).
   int get netMinutes {
     final total = endTime.difference(startTime).inMinutes;
-    return (total - lunchBreak).clamp(0, total);
+    final net = total - lunchBreak;
+    return net.clamp(0, 9999);
   }
 
-  /// Ore decimali nette
   double get netHours => netMinutes / 60.0;
 
-  bool get isDeleted => deletedAt != null;
-
-  // ─── SQLite ──────────────────────────────────────────────────────────────
-
-  factory HoursWorkedModel.fromSqlite(Map<String, dynamic> m) => HoursWorkedModel(
-    uuid: m['uuid'] as String,
-    userId: m['user_id'] as String,
-    aziendaUuid: m['azienda_uuid'] as String,
-    // IN LETTURA: Forziamo l'oggetto ad essere trattato come UTC
-    startTime: DateTime.parse(m['start_time'] as String).toUtc(),
-    endTime: DateTime.parse(m['end_time'] as String).toUtc(),
-    lunchBreak: m['lunch_break'] as int? ?? 60,
-    notes: m['notes'] as String?,
-    deletedAt: m['deleted_at'] != null
-        ? DateTime.parse(m['deleted_at'] as String).toUtc() : null,
-    createdAt: DateTime.parse(m['created_at'] as String).toUtc(),
-    updatedAt: DateTime.parse(m['updated_at'] as String).toUtc(),
-    isSynced: (m['is_synced'] as int?) == 1,
-    syncAction: m['sync_action'] as String? ?? 'none',
-  );
+  factory HoursWorkedModel.fromSqlite(Map<String, dynamic> m) =>
+      HoursWorkedModel(
+        uuid: m['uuid'] as String,
+        userId: m['user_id'] as String,
+        aziendaUuid: m['azienda_uuid'] as String,
+        startTime: DateTime.parse(m['start_time'] as String).toUtc(),
+        endTime: DateTime.parse(m['end_time'] as String).toUtc(),
+        lunchBreak: m['lunch_break'] as int? ?? 60,
+        notes: m['notes'] as String?,
+        createdAt: DateTime.parse(m['created_at'] as String).toUtc(),
+        updatedAt: DateTime.parse(m['updated_at'] as String).toUtc(),
+        isSynced: (m['is_synced'] as int?) == 1,
+        syncAction: m['sync_action'] as String? ?? 'none',
+      );
 
   Map<String, dynamic> toSqlite() => {
-    'uuid': uuid,
-    'user_id': userId,
-    'azienda_uuid': aziendaUuid,
-    // IN SCRITTURA: Esportiamo sempre e solo in stringhe ISO 8601 UTC
-    'start_time': startTime.toUtc().toIso8601String(),
-    'end_time': endTime.toUtc().toIso8601String(),
-    'lunch_break': lunchBreak,
-    'notes': notes,
-    'deleted_at': deletedAt?.toUtc().toIso8601String(),
-    'created_at': createdAt.toUtc().toIso8601String(),
-    'updated_at': updatedAt.toUtc().toIso8601String(),
-    'is_synced': isSynced ? 1 : 0,
-    'sync_action': syncAction,
-  };
+        'uuid': uuid,
+        'user_id': userId,
+        'azienda_uuid': aziendaUuid,
+        'start_time': startTime.toUtc().toIso8601String(),
+        'end_time': endTime.toUtc().toIso8601String(),
+        'lunch_break': lunchBreak,
+        'notes': notes,
+        'created_at': createdAt.toUtc().toIso8601String(),
+        'updated_at': updatedAt.toUtc().toIso8601String(),
+        'is_synced': isSynced ? 1 : 0,
+        'sync_action': syncAction,
+      };
 
-  // ─── Supabase ─────────────────────────────────────────────────────────────
-
-  factory HoursWorkedModel.fromSupabase(Map<String, dynamic> m) => HoursWorkedModel(
-    uuid: m['uuid'] as String,
-    userId: m['user_id'] as String,
-    aziendaUuid: m['azienda_uuid'] as String,
-    startTime: DateTime.parse(m['start_time'] as String).toUtc(),
-    endTime: DateTime.parse(m['end_time'] as String).toUtc(),
-    lunchBreak: m['lunch_break'] as int? ?? 60,
-    notes: m['notes'] as String?,
-    deletedAt: m['deleted_at'] != null
-        ? DateTime.parse(m['deleted_at'] as String).toUtc() : null,
-    createdAt: DateTime.parse(m['created_at'] as String).toUtc(),
-    updatedAt: DateTime.parse(m['updated_at'] as String).toUtc(),
-    isSynced: true,
-    syncAction: 'none',
-  );
+  factory HoursWorkedModel.fromSupabase(Map<String, dynamic> m) =>
+      HoursWorkedModel(
+        uuid: m['uuid'] as String,
+        userId: m['user_id'] as String,
+        aziendaUuid: m['azienda_uuid'] as String,
+        startTime: DateTime.parse(m['start_time'] as String).toUtc(),
+        endTime: DateTime.parse(m['end_time'] as String).toUtc(),
+        lunchBreak: m['lunch_break'] as int? ?? 60,
+        notes: m['notes'] as String?,
+        createdAt: DateTime.parse(m['created_at'] as String).toUtc(),
+        updatedAt: DateTime.parse(m['updated_at'] as String).toUtc(),
+        isSynced: true,
+        syncAction: 'none',
+      );
 
   Map<String, dynamic> toSupabase() => {
-    'uuid': uuid,
-    'user_id': userId,
-    'azienda_uuid': aziendaUuid,
-    'start_time': startTime.toUtc().toIso8601String(),
-    'end_time': endTime.toUtc().toIso8601String(),
-    'lunch_break': lunchBreak,
-    'notes': notes,
-    'deleted_at': deletedAt?.toUtc().toIso8601String(),
-    'created_at': createdAt.toUtc().toIso8601String(),
-    'updated_at': updatedAt.toUtc().toIso8601String(),
-  };
-
-  // ─── copyWith ─────────────────────────────────────────────────────────────
+        'uuid': uuid,
+        'user_id': userId,
+        'azienda_uuid': aziendaUuid,
+        'start_time': startTime.toUtc().toIso8601String(),
+        'end_time': endTime.toUtc().toIso8601String(),
+        'lunch_break': lunchBreak,
+        'notes': notes,
+        'created_at': createdAt.toUtc().toIso8601String(),
+        'updated_at': updatedAt.toUtc().toIso8601String(),
+        // 'deleted_at' è stato rimosso. Ora il salvataggio funzionerà.
+      };
 
   HoursWorkedModel copyWith({
     String? aziendaUuid,
@@ -152,23 +126,22 @@ class HoursWorkedModel {
     DateTime? endTime,
     int? lunchBreak,
     String? notes,
-    DateTime? deletedAt,
     bool? isSynced,
     String? syncAction,
-  }) => HoursWorkedModel(
-    uuid: uuid,
-    userId: userId,
-    aziendaUuid: aziendaUuid ?? this.aziendaUuid,
-    startTime: startTime ?? this.startTime,
-    endTime: endTime ?? this.endTime,
-    lunchBreak: lunchBreak ?? this.lunchBreak,
-    notes: notes ?? this.notes,
-    deletedAt: deletedAt ?? this.deletedAt,
-    createdAt: createdAt,
-    updatedAt: DateTime.now().toUtc(),
-    isSynced: isSynced ?? this.isSynced,
-    syncAction: syncAction ?? this.syncAction,
-  );
+  }) =>
+      HoursWorkedModel(
+        uuid: uuid,
+        userId: userId,
+        aziendaUuid: aziendaUuid ?? this.aziendaUuid,
+        startTime: startTime ?? this.startTime,
+        endTime: endTime ?? this.endTime,
+        lunchBreak: lunchBreak ?? this.lunchBreak,
+        notes: notes ?? this.notes,
+        createdAt: createdAt,
+        updatedAt: DateTime.now().toUtc(),
+        isSynced: isSynced ?? this.isSynced,
+        syncAction: syncAction ?? this.syncAction,
+      );
 
   @override
   bool operator ==(Object other) =>
