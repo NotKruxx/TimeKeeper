@@ -1,5 +1,3 @@
-// lib/ui/providers/data_cache_provider.dart
-
 import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -34,7 +32,10 @@ class DataCacheProvider extends ChangeNotifier {
           : result != ConnectivityResult.none;
 
       if (isConnected) {
-        OfflineWriteQueue.instance.processQueue().then((_) => refresh());
+        OfflineWriteQueue.instance.processQueue().then((_) async {
+          await refresh();
+          await _generateAutomaticShifts(); // 🔥 re-run dopo sync
+        });
       }
     });
   }
@@ -56,16 +57,23 @@ class DataCacheProvider extends ChangeNotifier {
         return; 
       }
 
-      // MODIFICA: Rimosso il filtro ".isFilter('deleted_at', null)" perché ora usiamo Hard Delete
       final results = await Future.wait([
         client.from('aziende').select().eq('user_id', uid),
         client.from('hours_worked').select().eq('user_id', uid),
         client.from('deleted_shifts').select('day_key, azienda_uuid').eq('user_id', uid),
       ]);
 
-      _aziende = (results[0] as List).map((e) => AziendaModel.fromSupabase(e as Map<String, dynamic>)).toList();
-      _hours = (results[1] as List).map((e) => HoursWorkedModel.fromSupabase(e as Map<String, dynamic>)).toList();
-      _deletedShifts = (results[2] as List).map((e) => e as Map<String, dynamic>).toList();
+      _aziende = (results[0] as List)
+          .map((e) => AziendaModel.fromSupabase(e as Map<String, dynamic>))
+          .toList();
+
+      _hours = (results[1] as List)
+          .map((e) => HoursWorkedModel.fromSupabase(e as Map<String, dynamic>))
+          .toList();
+
+      _deletedShifts = (results[2] as List)
+          .map((e) => e as Map<String, dynamic>)
+          .toList();
       
     } catch (e) {
       debugPrint('[DataCacheProvider] Refresh error: $e');
@@ -75,92 +83,118 @@ class DataCacheProvider extends ChangeNotifier {
     }
   }
 
-  // ─── Motore di Generazione Automatica Turni ──────────────────────────────
   Future<void> _generateAutomaticShifts() async {
     final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
     bool addedNewShifts = false;
 
     for (final az in _aziende) {
-      if (az.scheduleConfig['auto_generate'] == true) {
-        
-        final sinceStr = az.scheduleConfig['auto_generate_since'] as String?;
-        if (sinceStr == null) continue;
+      final config = az.scheduleConfig;
 
-        final workDays = (az.scheduleConfig['work_days'] as List?)?.cast<int>() ?? [];
-        final startTimeStr = az.scheduleConfig['start_time'] as String?;
-        final endTimeStr = az.scheduleConfig['end_time'] as String?;
-        final lunchBreak = az.scheduleConfig['lunch_break'] as int? ?? 60;
+      if (config['auto_generate'] != true) continue;
 
-        if (workDays.isEmpty || startTimeStr == null || endTimeStr == null) continue;
+      final sinceStr = config['auto_generate_since'] as String?;
+      if (sinceStr == null) continue;
 
-        DateTime startDate = DateTime.parse(sinceStr).toLocal();
-        DateTime currentDay = DateTime(startDate.year, startDate.month, startDate.day);
-        final endDay = DateTime(now.year, now.month, now.day);
+      final workDays = (config['work_days'] as List?)?.cast<int>() ?? [];
+      final startTimeStr = config['start_time'] as String?;
+      final endTimeStr = config['end_time'] as String?;
+      final lunchBreak = config['lunch_break'] as int? ?? 60;
 
-        while (currentDay.isBefore(endDay) || currentDay.isAtSameMomentAs(endDay)) {
-          if (workDays.contains(currentDay.weekday)) {
-            
-            final dayKey = DateFormat('yyyy-MM-dd').format(currentDay);
-            final isBlacklisted = _deletedShifts.any(
-              (d) => d['day_key'] == dayKey && d['azienda_uuid'] == az.uuid
+      if (workDays.isEmpty || startTimeStr == null || endTimeStr == null) continue;
+
+      final parsed = DateTime.parse(sinceStr).toLocal();
+      DateTime currentDay = DateTime(parsed.year, parsed.month, parsed.day);
+
+      while (currentDay.isBefore(today) || currentDay == today) {
+
+        if (!workDays.contains(currentDay.weekday)) {
+          currentDay = currentDay.add(const Duration(days: 1));
+          continue;
+        }
+
+        final dayKey = DateFormat('yyyy-MM-dd').format(currentDay);
+
+        final isBlacklisted = _deletedShifts.any(
+          (d) => d['day_key'] == dayKey && d['azienda_uuid'] == az.uuid
+        );
+
+        if (isBlacklisted) {
+          currentDay = currentDay.add(const Duration(days: 1));
+          continue;
+        }
+
+        final exists = _hours.any((h) {
+          final hLocal = h.startTime.toLocal();
+          return h.aziendaUuid == az.uuid &&
+                 hLocal.year == currentDay.year &&
+                 hLocal.month == currentDay.month &&
+                 hLocal.day == currentDay.day;
+        });
+
+        if (!exists) {
+          final sParts = startTimeStr.split(':');
+          final eParts = endTimeStr.split(':');
+
+          DateTime sTime = DateTime(
+            currentDay.year,
+            currentDay.month,
+            currentDay.day,
+            int.parse(sParts[0]),
+            int.parse(sParts[1]),
+          );
+
+          DateTime eTime = DateTime(
+            currentDay.year,
+            currentDay.month,
+            currentDay.day,
+            int.parse(eParts[0]),
+            int.parse(eParts[1]),
+          );
+
+          if (eTime.isBefore(sTime)) {
+            eTime = eTime.add(const Duration(days: 1));
+          }
+
+          final newShift = HoursWorkedModel.create(
+            userId: az.userId,
+            aziendaUuid: az.uuid,
+            startTime: sTime,
+            endTime: eTime,
+            lunchBreak: lunchBreak,
+            notes: 'Turno generato automaticamente',
+          );
+
+          try {
+            await Supabase.instance.client.from('hours_worked').upsert(
+              newShift.toSupabase(),
+              onConflict: 'uuid',
             );
 
-            if (isBlacklisted) {
-              currentDay = currentDay.add(const Duration(days: 1));
-              continue;
-            }
-            
-            final exists = _hours.any((h) {
-              final hLocal = h.startTime.toLocal();
-              return h.aziendaUuid == az.uuid &&
-                     hLocal.year == currentDay.year &&
-                     hLocal.month == currentDay.month &&
-                     hLocal.day == currentDay.day;
-            });
+            _hours.add(newShift);
+            addedNewShifts = true;
 
-            if (!exists) {
-              final sParts = startTimeStr.split(':');
-              final eParts = endTimeStr.split(':');
-              DateTime sTime = DateTime(currentDay.year, currentDay.month, currentDay.day, int.parse(sParts[0]), int.parse(sParts[1]));
-              DateTime eTime = DateTime(currentDay.year, currentDay.month, currentDay.day, int.parse(eParts[0]), int.parse(eParts[1]));
-              if (eTime.isBefore(sTime)) eTime = eTime.add(const Duration(days: 1)); 
-              
-              if (sTime.isBefore(now)) {
-                final newShift = HoursWorkedModel.create(
-                  userId: az.userId,
-                  aziendaUuid: az.uuid,
-                  startTime: sTime,
-                  endTime: eTime,
-                  lunchBreak: lunchBreak,
-                  notes: 'Turno generato automaticamente',
-                );
-                
-                try {
-                  await Supabase.instance.client.from('hours_worked').upsert(
-                    newShift.toSupabase(),
-                    onConflict: 'uuid',
-                  );
-                  
-                  _hours.add(newShift);
-                  addedNewShifts = true;
-                } on PostgrestException catch (e) {
-                  if (e.code == '23505') {
-                    print('ℹ️ Turno automatico già esistente, ignorato. ($dayKey)');
-                  } else {
-                    await OfflineWriteQueue.instance.enqueue(
-                      table: 'hours_worked', action: 'insert', data: newShift.toSupabase()
-                    );
-                  }
-                } catch (e) {
-                  await OfflineWriteQueue.instance.enqueue(
-                      table: 'hours_worked', action: 'insert', data: newShift.toSupabase()
-                  );
-                }
-              }
+            debugPrint('✅ Creato turno: $dayKey');
+
+          } on PostgrestException catch (e) {
+            if (e.code != '23505') {
+              await OfflineWriteQueue.instance.enqueue(
+                table: 'hours_worked',
+                action: 'insert',
+                data: newShift.toSupabase(),
+              );
             }
+          } catch (e) {
+            await OfflineWriteQueue.instance.enqueue(
+              table: 'hours_worked',
+              action: 'insert',
+              data: newShift.toSupabase(),
+            );
           }
-          currentDay = currentDay.add(const Duration(days: 1));
         }
+
+        currentDay = currentDay.add(const Duration(days: 1));
       }
     }
 
@@ -188,6 +222,8 @@ class DataCacheProvider extends ChangeNotifier {
         data: model.toSupabase(),
       );
     }
+
+    await _generateAutomaticShifts();
   }
 
   // ─── Hours Mutations ─────────────────────────────────────────────────────
@@ -205,16 +241,6 @@ class DataCacheProvider extends ChangeNotifier {
         model.toSupabase(),
         onConflict: 'uuid',
       );
-    } on PostgrestException catch (e) {
-      if (e.code == '23505') {
-        print('ℹ️ Rilevato tentativo di salvataggio duplicato per le ore, ignorato. (${model.uuid})');
-      } else {
-        await OfflineWriteQueue.instance.enqueue(
-          table: 'hours_worked',
-          action: 'insert',
-          data: model.toSupabase(),
-        );
-      }
     } catch (e) {
       await OfflineWriteQueue.instance.enqueue(
         table: 'hours_worked',
@@ -224,7 +250,7 @@ class DataCacheProvider extends ChangeNotifier {
     }
   }
 
-  // ─── Delete Mutations (MODIFICATE PER HARD DELETE) ────────────────────────
+  // ─── Delete ──────────────────────────────────────────────────────────────
   Future<void> deleteAzienda(String uuid) async {
     _aziende.removeWhere((e) => e.uuid == uuid);
     notifyListeners();
